@@ -2,6 +2,8 @@
 
 #include <cmath>
 #include <stdexcept>
+#include <cstdlib>       // std::getenv
+#include "params_io.hpp" // load_params_from_json
 
 namespace psearch {
 
@@ -28,6 +30,30 @@ void Params::derive_dependent_parameters() {
 }
 
     Params Params::make_test_params() {
+    // Opt-in: if MIMIR_TEST_PARAMS_FILE is set, load real parameters from
+    // that file instead of the small hardcoded ones below. This lets the
+    // EXACT SAME test suite run against a real parameter set -- no test file
+    // needs to change, nothing needs to be typed by hand. OFF by default, so
+    // a plain `ctest` run stays fast.
+    //
+    // Some tests loop over every cluster, single-threaded (e.g.
+    // test_full_scoring_with_cluster_selection.cpp, test_full_scoring_with_splits.cpp)
+    // -- against a real file (num_clusters in the hundreds), those can take
+    // tens of seconds instead of milliseconds. Prefer running specific tests
+    // rather than the whole suite when this is set, e.g.:
+    //   MIMIR_TEST_PARAMS_FILE=path/to/params.json ctest -R FullScoringWithSplitsParallel
+    //   MIMIR_TEST_PARAMS_FILE=path/to/params.json ./test_full_scoring_with_splits_parallel
+    if (const char* env_path = std::getenv("MIMIR_TEST_PARAMS_FILE")) {
+        std::string path(env_path);
+        if (!path.empty()) {
+            std::cout << "MIMIR_TEST_PARAMS_FILE set -- loading test params from " << path << "\n";
+            // num_servers/desired_cluster_index don't affect what any
+            // correctness test actually checks -- 1 and 0 are safe,
+            // always-valid defaults regardless of the file's num_clusters.
+            return load_params_from_json(path, /*num_servers=*/1, /*desired_cluster_index=*/0);
+        }
+    }
+
     Params p;
     // Verified working via sanity_check.cpp (LWE -> RLWE -> decrypt round trip).
     p.n = 4096;//4096;

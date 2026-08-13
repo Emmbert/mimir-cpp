@@ -65,25 +65,31 @@ There is an additional test, that shows the time speedup of the NTT evaluation f
 ./benchmark_multiplication_speed
 ```
 
+To run the test with actual mimir parameters, add the parameter file destination, as i.e.:
+```bash
+MIMIR_TEST_PARAMS_FILE=<parameters_file> ctest --output-on-failure
+MIMIR_TEST_PARAMS_FILE=<parameters_file> ./test_lwe_to_rlwe_roundtrip
+```
+
 ### For running the benchmarks
 
 Single-threaded:
 
 ```bash
 cmake --build . -j
-./benchmark_latency 
+./benchmark_latency <parameters_file> 
 ```
 
 Multi-threaded on <num_threads> many threads in parallel:
 
 ```bash
 cmake --build . -j
-OMP_NUM_THREADS=<num_threads> ./benchmark_latency_parallel
+OMP_NUM_THREADS=<num_threads> ./benchmark_latency_parallel <parameters_file> 
 ```
 
 Simulation over several worker machines, specified in params.cpp:
 
 ```bash
 cmake --build . -j
-./benchmark_latency_distributed 
+./benchmark_latency_distributed <parameters_file> <number_vms> <desired_cluster_index>
 ```

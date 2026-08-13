@@ -1,0 +1,46 @@
+{
+    "B_BASE_DIGIT_KS": 3,
+    "B_BASE_DIGIT_PRIME": 5,
+    "C_NUM_CLUSTERS": 24,
+    "d_DECOMP_VEC_LEN_KS": 36,
+    "d_DECOMP_VEC_LEN_PRIME": 25,
+    "DFR": "9.1e-13",
+    "DFR_limit": "9.1e-13",
+    "EMBEDDING_PRECISION": 4,
+    "l_EMBEDDING_DIM": 192,
+    "LAMBDA": 252.94771667693914,
+    "LAMBDA_min": 128,
+    "n_LATTICE_DIMENSION": 4096,
+    "N_NUM_DOCS": 3213835,
+    "offline_client_comp": "2.0e+06",
+    "offline_server_comp": "3.7e+09",
+    "offline_upload": "12.72 MB",
+    "online_client_comp": "4.2e+06",
+    "online_server_comp": "1.5e+10",
+    "online_upload_size": "5.54 KB",
+    "online_download_size": "1.84 MB",
+    "PLAINTEXT_MODULUS": 12288,
+    "pr_COMP_RING_MODULUS": 12288,
+    "q_CIPHERTEXT_MODULUS": 102445068478701569,
+    "q_log2": "2^56",
+    "r_NUM_COMP_RINGS": 1,
+    "result_type": "precise",
+    "sigma_STANDARD_DEV": 3.2,
+    "std_ranking": "5.8e+11"
+}
+
+p.n = 4096; //2048;
+    p.q = 102445068478701569; //281474976694273;
+    p.sigma = 3.2;
+    p.plaintext_modulus = 12288; //71;
+    p.decomposition_base_ksk = 3; // TODO: keep in sync with whatever noise-safe value
+    p.decomposition_base_prime = 5; // TODO: keep in sync with whatever noise-safe value
+    // you settled on for the RGSW switch.
+
+    p.database_size = 3213835; //p.n*8; // most tests pin this locally anyway (splits_per_cluster == 1);
+    // see test_full_scoring_with_splits.cpp for the exception.
+    p.embedding_length = 4; //4;
+    p.embedding_precision = 4; //2; // signed range [-2, 1]
+    p.num_clusters = 24; //4;
+    p.num_servers = 1;
+    p.desired_cluster_index = 2;

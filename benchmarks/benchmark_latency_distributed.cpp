@@ -46,6 +46,7 @@
 #include "key_material.hpp"
 #include "params.hpp"
 #include "timing.hpp"
+#include "params_io.hpp"
 
 using namespace FHEDeck;
 using namespace psearch;
@@ -253,8 +254,9 @@ void run_one_query(const CryptoContext& ctx, const Params& params, const ClientS
 
 } // namespace
 
-int main() {
-    Params params = Params::make_benchmark_params();
+
+int main(int argc, char** argv) {
+    Params params = load_benchmark_params_from_args(argc, argv);
     CryptoContext ctx = CryptoContext::from_params(params);
 
     std::cout << "OpenMP max threads: " << omp_get_max_threads() << "\n";

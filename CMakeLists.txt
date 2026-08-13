@@ -33,11 +33,20 @@ FetchContent_MakeAvailable(googletest)
 enable_testing()
 include(GoogleTest)
 
+# --- JSON parsing (nlohmann::json) for loading benchmark parameters -------
+FetchContent_Declare(
+        json
+        GIT_REPOSITORY https://github.com/nlohmann/json.git
+        GIT_TAG v3.11.3
+)
+FetchContent_MakeAvailable(json)
+
 # --- Core library ------------------------------------------------------------
 add_library(mimir_core
         src/params.cpp
         src/key_material.cpp
         src/db_polynomial.cpp
+        src/params_io.cpp
         #src/timing.cpp
         #src/channel.cpp
         #src/server_db.cpp
@@ -51,6 +60,7 @@ target_include_directories(mimir_core PUBLIC include)
 # it's probably something like "fhe_deck" (check the .a filename too:
 # libfhe_deck.a → likely target name "fhe_deck")
 target_link_libraries(mimir_core PUBLIC fhe_deck)
+target_link_libraries(mimir_core PRIVATE nlohmann_json::nlohmann_json)
 
 # --- Plain (non-gtest) executables -------------------------------------------
 add_executable(kamils_test tests/mimir_performance_tests.cpp)
