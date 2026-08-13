@@ -51,4 +51,21 @@ namespace psearch {
 /// required field, or r_NUM_COMP_RINGS != 1.
 Params load_params_from_json(const std::string& path, int64_t num_servers, int64_t desired_cluster_index = 0);
 
+/// Convenience for benchmark main()s: the ONE shared place every benchmark
+/// (benchmark_latency, benchmark_latency_parallel, benchmark_latency_distributed,
+/// and any future one) gets its Params from, so they all support the same
+/// command-line convention automatically rather than each re-implementing
+/// argv parsing:
+///
+///   ./benchmark_xyz                                  -> Params::make_benchmark_params()
+///   ./benchmark_xyz params.json 8                     -> load_params_from_json(path, num_servers=8)
+///   ./benchmark_xyz params.json 8 3                   -> also desired_cluster_index=3
+///
+/// Deliberately NOT used by Params::make_test_params() or any test -- tests
+/// need small, fast, hand-verified parameters, and silently loading a
+/// realistic (large) parameter file into every correctness test would turn
+/// a several-second `ctest` run into minutes/hours. This function exists
+/// specifically for benchmark entry points, not general Params construction.
+Params load_benchmark_params_from_args(int argc, char** argv);
+
 } // namespace psearch

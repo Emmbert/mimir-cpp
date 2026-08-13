@@ -122,4 +122,17 @@ Params load_params_from_json(const std::string& path, int64_t num_servers, int64
     return p;
 }
 
+Params load_benchmark_params_from_args(int argc, char** argv) {
+    if (argc >= 3) {
+        std::string path = argv[1];
+        int64_t num_servers = std::stoll(argv[2]);
+        int64_t desired_cluster_index = (argc >= 4) ? std::stoll(argv[3]) : 0;
+        return load_params_from_json(path, num_servers, desired_cluster_index);
+    }
+    std::cout << "No parameter file given (usage: " << (argc >= 1 ? argv[0] : "<binary>")
+              << " <params.json> <num_servers> [desired_cluster_index]); "
+              << "falling back to Params::make_benchmark_params().\n";
+    return Params::make_benchmark_params();
+}
+
 } // namespace psearch
