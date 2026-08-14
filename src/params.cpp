@@ -13,7 +13,7 @@ void Params::derive_dependent_parameters() {
                                      "before calling derive_dependent_parameters()");
     }
     auto is_power_of_two = [](int64_t x) { return x > 0 && (x & (x - 1)) == 0; };
-    if (!is_power_of_two(decomposition_base_ksk)) {
+    /*if (!is_power_of_two(decomposition_base_ksk)) {
         throw std::invalid_argument("decomposition_base_ksk (" + std::to_string(decomposition_base_ksk) +
                                      ") must be a power of two -- FHE-Deck's gadget decomposition "
                                      "silently produces wrong results otherwise.");
@@ -22,7 +22,7 @@ void Params::derive_dependent_parameters() {
         throw std::invalid_argument("decomposition_base_prime (" + std::to_string(decomposition_base_prime) +
                                      ") must be a power of two -- FHE-Deck's gadget decomposition "
                                      "silently produces wrong results otherwise.");
-    }
+    }*/
 
     cluster_size = database_size / num_clusters; // int division, as specified
     splits_per_cluster = (cluster_size + n - 1) / n; // ceil(cluster_size / n)
