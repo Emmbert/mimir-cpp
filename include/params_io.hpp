@@ -1,4 +1,5 @@
 #pragma once
+#include <ostream>
 #include <string>
 
 #include "params.hpp"
@@ -67,5 +68,12 @@ Params load_params_from_json(const std::string& path, int64_t num_servers, int64
 /// a several-second `ctest` run into minutes/hours. This function exists
 /// specifically for benchmark entry points, not general Params construction.
 Params load_benchmark_params_from_args(int argc, char** argv);
+
+/// Prints every field of `params` to `os`, plus `source_description` (a
+/// file path if one was loaded, or a note that built-in defaults were
+/// used). Called by every benchmark, to both stdout and the results file,
+/// so a results file is self-describing months later without needing to
+/// separately archive the exact command line that produced it.
+void print_params(std::ostream& os, const Params& params, const std::string& source_description);
 
 } // namespace psearch

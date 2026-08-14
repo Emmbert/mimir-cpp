@@ -47,6 +47,9 @@ add_library(mimir_core
         src/key_material.cpp
         src/db_polynomial.cpp
         src/params_io.cpp
+        src/seeded_distribution.cpp
+        src/seeded_eval_keys.cpp
+        src/seeded_query.cpp
         #src/timing.cpp
         #src/channel.cpp
         #src/server_db.cpp
@@ -62,18 +65,21 @@ target_include_directories(mimir_core PUBLIC include)
 target_link_libraries(mimir_core PUBLIC fhe_deck)
 target_link_libraries(mimir_core PRIVATE nlohmann_json::nlohmann_json)
 
+# seed expansion via xof from OpenSSL
+find_package(OpenSSL REQUIRED)
+target_link_libraries(mimir_core PRIVATE OpenSSL::Crypto)
+
 # --- Plain (non-gtest) executables -------------------------------------------
 add_executable(kamils_test tests/mimir_performance_tests.cpp)
 target_link_libraries(kamils_test PRIVATE mimir_core)
 
 # --- GoogleTest-based unit tests ---------------------------------------------
+
 add_executable(test_lwe_to_rlwe_roundtrip tests/test_lwe_to_rlwe_roundtrip.cpp)
 target_link_libraries(test_lwe_to_rlwe_roundtrip PRIVATE
         mimir_core
         GTest::gtest_main
 )
-# Registers each TEST(...) case in this binary as its own CTest test,
-# discovered at build time by running the binary with --gtest_list_tests.
 gtest_discover_tests(test_lwe_to_rlwe_roundtrip)
 
 add_executable(test_rlwe_plaintext_multiplication tests/test_rlwe_plaintext_multiplication.cpp)
@@ -144,16 +150,62 @@ gtest_discover_tests(test_full_scoring_with_splits_parallel
         DISCOVERY_MODE PRE_TEST
 )
 
-#add_executable(test_protocol_single_process tests/test_protocol_single_process.cpp)
-#target_link_libraries(test_protocol_single_process PRIVATE mimir_core)
+add_executable(test_seeded_lwe_to_rlwe_roundtrip tests/test_seeded_lwe_to_rlwe_roundtrip.cpp)
+target_link_libraries(test_seeded_lwe_to_rlwe_roundtrip PRIVATE
+        mimir_core
+        GTest::gtest_main
+)
+gtest_discover_tests(test_seeded_lwe_to_rlwe_roundtrip
+        DISCOVERY_MODE PRE_TEST
+)
 
+add_executable(test_seeded_key_material_and_query_roundtrip tests/test_seeded_key_material_and_query_roundtrip.cpp)
+target_link_libraries(test_seeded_key_material_and_query_roundtrip PRIVATE
+        mimir_core
+        GTest::gtest_main
+)
+gtest_discover_tests(test_seeded_key_material_and_query_roundtrip
+        DISCOVERY_MODE PRE_TEST
+)
+
+add_executable(test_full_scoring_with_splits_seeded tests/test_full_scoring_with_splits_seeded.cpp)
+target_link_libraries(test_full_scoring_with_splits_seeded PRIVATE
+        mimir_core
+        GTest::gtest_main
+)
+gtest_discover_tests(test_full_scoring_with_splits_seeded
+        DISCOVERY_MODE PRE_TEST
+)
+
+add_executable(test_full_scoring_with_splits_seeded_parallel tests/test_full_scoring_with_splits_seeded_parallel.cpp)
+target_link_libraries(test_full_scoring_with_splits_seeded_parallel PRIVATE
+        mimir_core
+        GTest::gtest_main
+        OpenMP::OpenMP_CXX
+)
+gtest_discover_tests(test_full_scoring_with_splits_seeded_parallel
+        DISCOVERY_MODE PRE_TEST
+)
+
+# ------ Latency Benchmarks ------
+find_package(OpenMP REQUIRED)
+
+# benchmarks with full randomness a in ciphertexts
 add_executable(benchmark_latency benchmarks/benchmark_latency.cpp)
 target_link_libraries(benchmark_latency PRIVATE mimir_core)
-
-find_package(OpenMP REQUIRED)
 
 add_executable(benchmark_latency_parallel benchmarks/benchmark_latency_parallel.cpp)
 target_link_libraries(benchmark_latency_parallel PRIVATE mimir_core OpenMP::OpenMP_CXX)
 
 add_executable(benchmark_latency_distributed benchmarks/benchmark_latency_distributed.cpp)
 target_link_libraries(benchmark_latency_distributed PRIVATE mimir_core OpenMP::OpenMP_CXX)
+
+# benchmarks with seed
+add_executable(benchmark_latency_seeded benchmarks/benchmark_latency_seeded.cpp)
+target_link_libraries(benchmark_latency_seeded PRIVATE mimir_core)
+
+add_executable(benchmark_latency_seeded_parallel benchmarks/benchmark_latency_seeded_parallel.cpp)
+target_link_libraries(benchmark_latency_seeded_parallel PRIVATE mimir_core OpenMP::OpenMP_CXX)
+
+add_executable(benchmark_latency_seeded_distributed benchmarks/benchmark_latency_seeded_distributed.cpp)
+target_link_libraries(benchmark_latency_seeded_distributed PRIVATE mimir_core OpenMP::OpenMP_CXX)

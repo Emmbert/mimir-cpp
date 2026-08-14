@@ -37,33 +37,6 @@ int64_t read_int_required(const json& j, const std::string& key) {
     return v.get<int64_t>();
 }
 
-int64_t round_up_to_power_of_two(int64_t x) {
-    if (x <= 1) return 1;
-    int64_t p = 1;
-    while (p < x) p <<= 1;
-    return p;
-}
-
-/// Reads a gadget base field, rounding up to the nearest power of two if
-/// necessary (with a warning) -- see params_io.hpp for why this is needed.
-/// TODO: if you'd rather fail loudly instead of approximating, replace the
-/// rounding branch below with:
-///   throw std::runtime_error("load_params_from_json: " + key + " (" +
-///       std::to_string(base) + ") is not a power of two, and this loader "
-///       "is configured to reject that rather than approximate.");
-int64_t read_gadget_base(const json& j, const std::string& key) {
-    int64_t base = read_int_required(j, key);
-    int64_t rounded = round_up_to_power_of_two(base);
-    if (rounded != base) {
-        std::cerr << "WARNING: load_params_from_json: " << key << " = " << base
-                  << " is not a power of two (fhe-deck-core's gadget decomposition requires "
-                  << "one). Rounding UP to " << rounded << ". This means the loaded parameters "
-                  << "no longer exactly match this file's own DFR / communication-cost "
-                  << "predictions, which assumed base " << base << ".\n";
-    }
-    return rounded;
-}
-
 } // namespace
 
 Params load_params_from_json(const std::string& path, int64_t num_servers, int64_t desired_cluster_index) {
@@ -96,8 +69,8 @@ Params load_params_from_json(const std::string& path, int64_t num_servers, int64
     p.sigma = read_number_flexible(j, "sigma_STANDARD_DEV");
     p.plaintext_modulus = read_int_required(j, "PLAINTEXT_MODULUS");
 
-    p.decomposition_base_ksk = read_gadget_base(j, "B_BASE_DIGIT_KS");
-    p.decomposition_base_prime = read_gadget_base(j, "B_BASE_DIGIT_PRIME");
+    p.decomposition_base_ksk = read_int_required(j, "B_BASE_DIGIT_KS");
+    p.decomposition_base_prime = read_int_required(j, "B_BASE_DIGIT_PRIME");
 
     p.database_size = read_int_required(j, "N_NUM_DOCS");
     p.embedding_length = read_int_required(j, "l_EMBEDDING_DIM");
@@ -133,6 +106,26 @@ Params load_benchmark_params_from_args(int argc, char** argv) {
               << " <params.json> <num_servers> [desired_cluster_index]); "
               << "falling back to Params::make_benchmark_params().\n";
     return Params::make_benchmark_params();
+}
+
+void print_params(std::ostream& os, const Params& params, const std::string& source_description) {
+    os << "=== Parameters (source: " << source_description << ") ===\n";
+    os << "n                        = " << params.n << "\n";
+    os << "q                        = " << params.q << "\n";
+    os << "sigma                    = " << params.sigma << "\n";
+    os << "plaintext_modulus        = " << params.plaintext_modulus << "\n";
+    os << "decomposition_base_ksk   = " << params.decomposition_base_ksk << "\n";
+    os << "decomposition_base_prime = " << params.decomposition_base_prime << "\n";
+    os << "database_size            = " << params.database_size << "\n";
+    os << "embedding_length         = " << params.embedding_length << "\n";
+    os << "embedding_precision      = " << params.embedding_precision << "\n";
+    os << "num_clusters             = " << params.num_clusters << "\n";
+    os << "cluster_size             = " << params.cluster_size << "\n";
+    os << "splits_per_cluster       = " << params.splits_per_cluster << "\n";
+    os << "num_servers              = " << params.num_servers << "\n";
+    os << "clusters_per_server      = " << params.clusters_per_server << "\n";
+    os << "desired_cluster_index    = " << params.desired_cluster_index << "\n";
+    os << "\n";
 }
 
 } // namespace psearch

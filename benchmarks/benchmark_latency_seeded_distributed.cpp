@@ -1,48 +1,30 @@
-// benchmark_latency_distributed.cpp
+// benchmark_latency_seeded_distributed.cpp
 //
-// Simulates a deployment with num_servers identical machines, each holding
-// clusters_per_server = num_clusters / num_servers clusters, WITHOUT
-// actually running num_servers processes or any real network/IPC. This is a
-// COMPUTE-ONLY latency estimate: it answers "how long would the crypto work
-// take if perfectly parallelized across num_servers identical machines,"
-// deliberately excluding network round-trip time, serialization, and
-// orchestration overhead.
+// Combines benchmark_latency_distributed.cpp's num_servers simulation
+// (compute-only, no network cost) with seeded eval keys and a seeded query,
+// both reconstructed with NO secret key involved in reconstruction.
 //
 // IMPORTANT correction from an earlier version: the client always builds
-// and encrypts the FULL query -- all num_clusters selector ciphertexts, not
+// and sends the FULL query -- all num_clusters selector ciphertexts, not
 // just clusters_per_server -- since a real client doesn't know server
-// topology. "Distribution" happens AFTER encryption: one contiguous batch
-// of clusters_per_server selector ciphertexts is sliced out of the full set
-// (no extra work, just indexing), and only THAT batch gets RGSW-switched
-// and scored, simulating one server's share. The earlier version built only
-// clusters_per_server ciphertexts to begin with, understating
-// client_query_gen's real cost.
+// topology. Unpacking (reconstruct_query) therefore reconstructs the FULL
+// query too, and this cost does NOT scale down with num_servers: because
+// SeededUniformDistribution's stream is sequential (rejection sampling
+// makes per-ciphertext offsets data-dependent -- see the earlier
+// discussion), whoever unpacks the query has to expand the ENTIRE stream
+// regardless of how many physical machines exist downstream. Only AFTER
+// full reconstruction does "distribution" happen: one contiguous batch of
+// clusters_per_server selector ciphertexts is sliced out of the fully-
+// reconstructed set (no extra work, just indexing), and only THAT batch
+// gets RGSW-switched and scored -- simulating one server's share.
 //
-// What's actually simulated vs. what's computed for real:
-//   - Query encryption: computed IN FULL (all num_clusters selector
-//     ciphertexts, all l embedding ciphertexts) -- this is real client
-//     behavior, unaffected by num_servers.
-//   - The (single, shared) RLWE switch of the embedding vector, and
-//     decryption: computed IN FULL, unaffected by num_servers -- these
-//     aren't sharded across servers in the real protocol either.
-//   - RGSW switching ("unpacking" the cluster-selector bits) and scoring
-//     (including the RGSW mask): computed for REAL, but only for ONE
-//     batch of clusters_per_server clusters, sliced out of the full
-//     encrypted set. Every server is assumed identical and works in
-//     parallel, so this one computation's wall-clock time stands in for
-//     what EVERY server experiences simultaneously -- there's no reason to
-//     multiply it by num_servers.
-//   - Cross-server summation: the orchestrator receiving one partial-sum
-//     ciphertext per server (per split) and adding all num_servers of them
-//     together. This genuinely needs to happen num_servers times, so the
-//     one partial result actually computed above is added into the final
-//     accumulator num_servers times, simulating "as if" num_servers
-//     structurally-identical partials had arrived from num_servers real
-//     machines.
+// Unpacking stays SEQUENTIAL for the same reason as
+// benchmark_latency_seeded_parallel.cpp. Switching and scoring are
+// parallelized, and only over the one batch, exactly as before.
 //
 // Run directly, with the desired thread count set via the environment:
-//   OMP_NUM_THREADS=16 ./benchmark_latency_distributed
-//   OMP_NUM_THREADS=16 ./benchmark_latency_distributed params.json 8
+//   OMP_NUM_THREADS=16 ./benchmark_latency_seeded_distributed
+//   OMP_NUM_THREADS=16 ./benchmark_latency_seeded_distributed params.json 8
 
 #include <omp.h>
 
@@ -58,6 +40,9 @@
 #include "key_material.hpp"
 #include "params.hpp"
 #include "params_io.hpp"
+#include "seeded_distribution.hpp"
+#include "seeded_eval_keys.hpp"
+#include "seeded_query.hpp"
 #include "timing.hpp"
 
 using namespace FHEDeck;
@@ -71,13 +56,7 @@ constexpr int kSetupMeasuredRuns = 10;
 constexpr int kQueryWarmupRuns = 2;
 constexpr int kQueryMeasuredRuns = 10;
 
-const char* kOutputFilePath = "benchmark_latency_distributed_results.txt";
-
-RLWECT switch_to_rlwe(const CryptoContext& ctx, const ClientPublicMaterial& pub, const LWECT& lwe_ct) {
-    RLWECT rlwe_ct(ctx.rlwe_param);
-    pub.lwe_to_rlwe_ksk->lwe_to_rlwe_key_switch(rlwe_ct, lwe_ct);
-    return rlwe_ct;
-}
+const char* kOutputFilePath = "benchmark_latency_seeded_distributed_results.txt";
 
 RLWECT compute_split_score(const CryptoContext& ctx, const std::vector<std::unique_ptr<RLWECTEvalForm>>& query_eval,
                             const std::vector<DatabasePolynomialEvalForm>& db_split) {
@@ -90,19 +69,28 @@ RLWECT compute_split_score(const CryptoContext& ctx, const std::vector<std::uniq
     return RLWECT(score_eval);
 }
 
-void run_setup_and_registration(const CryptoContext& ctx, const Params& params, LatencyRecorder& rec) {
-    ClientSecretMaterial secret;
+ClientPublicMaterial run_setup_and_registration(const CryptoContext& ctx, const Params& params,
+                                                 ClientSecretMaterial& secret, LatencyRecorder& rec) {
     {
         ScopedTimer t(rec, "client_setup");
         secret = generate_client_secret_material(ctx, params);
     }
+
+    SeededClientPublicMaterial eval_wire;
     {
-        ScopedTimer t(rec, "client_registration");
-        [[maybe_unused]] ClientPublicMaterial pub = generate_client_public_material(ctx, secret);
+        ScopedTimer t(rec, "client eval key generation (seeded)");
+        eval_wire = build_seeded_public_material(ctx, secret);
     }
+
+    ClientPublicMaterial pub;
+    {
+        ScopedTimer t(rec, "eval key unpacking");
+        pub = reconstruct_public_material(ctx, params, eval_wire); // sequential -- see file header
+    }
+    return pub;
 }
 
-void run_one_query(const CryptoContext& ctx, const Params& params, const ClientSecretMaterial& secret,
+void run_one_query(const CryptoContext& ctx, const Params& params, ClientSecretMaterial& secret,
                     const ClientPublicMaterial& pub, std::mt19937_64& rng, LatencyRecorder& rec) {
     if (params.num_servers <= 0 || params.clusters_per_server <= 0) {
         throw std::invalid_argument("params.num_servers and params.clusters_per_server must be > 0 "
@@ -110,70 +98,78 @@ void run_one_query(const CryptoContext& ctx, const Params& params, const ClientS
     }
 
     // --- client_query_gen: FULL query -- the client doesn't know server
-    // topology, so it encrypts all num_clusters selector bits, not just
+    // topology, so it builds all num_clusters selector entries, not just
     // clusters_per_server. -----------------------------------------------------
-    std::vector<LWECT> embedding_lwe;
-    std::vector<LWEGadgetCT> selector_gadget; // FULL: num_clusters entries
+    SeededQuery query_wire;
     {
-        ScopedTimer t(rec, "client_query_gen");
+        ScopedTimer t(rec, "client_query_gen (seeded)");
 
-        embedding_lwe.reserve(static_cast<size_t>(params.embedding_length));
+        std::vector<int64_t> embedding_values;
+        embedding_values.reserve(static_cast<size_t>(params.embedding_length));
         for (int64_t j = 0; j < params.embedding_length; ++j) {
-            int64_t m = sample_signed_mod_value(params, rng);
-            embedding_lwe.push_back(secret.lwe_sk->encode_and_encrypt(m, ctx.encoding));
+            embedding_values.push_back(sample_signed_mod_value(params, rng));
         }
 
-        selector_gadget.reserve(static_cast<size_t>(params.num_clusters));
-        for (int64_t c = 0; c < params.num_clusters; ++c) {
-            int64_t bit = (c == params.desired_cluster_index) ? 1 : 0;
-            selector_gadget.push_back(secret.lwe_gadget_sk->gadget_encrypt(bit));
-        }
+        query_wire = build_seeded_query(ctx, secret, embedding_values, params.num_clusters,
+                                         params.desired_cluster_index);
     }
 
     std::vector<RLWECT> final_result;
+    ReconstructedQuery query; // FULL: l embedding_cts, num_clusters selector_cts
     std::vector<std::unique_ptr<RLWECTEvalForm>> query_eval;
     std::vector<std::unique_ptr<RLWEGadgetCT>> rgsw_ct;
 
     {
         ScopedTimer t(rec, "server_processing");
 
-        // --- Shared, non-sharded step: convert the embedding query to
-        // RLWE/eval form once, in full -- every server needs the same query,
-        // this isn't divided by num_servers. -------------------------------
+        // --- Unpacking: FULL, sequential. Cost does NOT scale down with
+        // num_servers -- see file header for why. -------------------------------
+        {
+            ScopedTimer t_unpack(rec, "query unpacking");
+            query = reconstruct_query(ctx, params, query_wire);
+        }
+
+        // --- RLWE switching: FULL embedding, multithreaded. Unaffected by
+        // server topology, same as the non-distributed benchmarks. ---------------
+        query_eval.resize(query.embedding_cts.size());
         {
             ScopedTimer t_switch_rlwe(rec, "RLWE ciphertext switching");
-            query_eval.resize(static_cast<size_t>(params.embedding_length));
             #pragma omp parallel for schedule(dynamic)
-            for (int64_t j = 0; j < params.embedding_length; ++j) {
-                RLWECT rlwe_ct = switch_to_rlwe(ctx, pub, embedding_lwe[static_cast<size_t>(j)]);
+            for (int64_t j = 0; j < static_cast<int64_t>(query.embedding_cts.size()); ++j) {
+                RLWECT rlwe_ct(ctx.rlwe_param);
+                pub.lwe_to_rlwe_ksk->lwe_to_rlwe_key_switch(rlwe_ct, query.embedding_cts[static_cast<size_t>(j)]);
                 query_eval[static_cast<size_t>(j)] = std::make_unique<RLWECTEvalForm>(rlwe_ct);
             }
         }
 
         // --- "Distribution": slice ONE contiguous batch of
-        // clusters_per_server selector ciphertexts out of the full,
-        // already-encrypted set -- no extra work, just indexing. -----------------
+        // clusters_per_server selector ciphertexts out of the fully-
+        // reconstructed set -- no extra work, just indexing. The batch
+        // containing desired_cluster_index is picked for realism; which
+        // batch doesn't affect timing. Falls back to batch 0 if
+        // num_clusters doesn't divide evenly and desired_cluster_index
+        // lands in the leftover region. -------------------------------------------
         int64_t batch_index = params.desired_cluster_index / params.clusters_per_server;
         if (batch_index >= params.num_servers) {
             batch_index = 0;
         }
         int64_t batch_start = batch_index * params.clusters_per_server;
 
-        // --- Per-server step: RGSW switching, only ONE batch -- stands in
-        // for one server's latency; every server does the same amount of
-        // work, in parallel, at the same time. -----------------------------
+        // --- RGSW switching: only this ONE batch, multithreaded -- stands
+        // in for one server's latency; every server does the same amount of
+        // work, in parallel, at the same time. -------------------------------------
         rgsw_ct.resize(static_cast<size_t>(params.clusters_per_server));
         {
             ScopedTimer t_switch_rgsw(rec, "RGSW ciphertext switching (one server's share)");
             #pragma omp parallel for schedule(dynamic)
             for (int64_t c = 0; c < params.clusters_per_server; ++c) {
-                const auto& gadget_ct = selector_gadget[static_cast<size_t>(batch_start + c)];
+                const auto& gadget_ct = query.selector_cts[static_cast<size_t>(batch_start + c)];
                 RLWEGadgetCT rgsw = pub.lwe_to_rgsw_ksk->lwe_to_rlwe_key_switch(gadget_ct);
                 rgsw_ct[static_cast<size_t>(c)] = std::make_unique<RLWEGadgetCT>(std::move(rgsw));
             }
         }
 
-        // --- Per-server step: scoring, only this ONE batch's clusters. ----
+        // --- Scoring: only this ONE batch's clusters_per_server clusters. --------
         std::vector<RLWECT> partial_result; // one server's contribution, per split
         {
             ScopedTimer t_scoring(rec, "scoring calculations (one server's share)");
@@ -243,7 +239,7 @@ void run_one_query(const CryptoContext& ctx, const Params& params, const ClientS
             }
         }
 
-        // --- Cross-server summation: genuinely repeated num_servers times. --
+        // --- Cross-server summation: genuinely repeated num_servers times. -------
         {
             ScopedTimer t_cross_server(rec, "cross-server summation");
 
@@ -285,19 +281,18 @@ int main(int argc, char** argv) {
     std::mt19937_64 rng(std::random_device{}());
 
     LatencyRecorder rec;
+    ClientSecretMaterial secret;
 
     std::cout << "Warming up client setup/registration (" << kSetupWarmupRuns << " runs)...\n";
-    for (int i = 0; i < kSetupWarmupRuns; ++i) run_setup_and_registration(ctx, params, rec);
+    for (int i = 0; i < kSetupWarmupRuns; ++i) run_setup_and_registration(ctx, params, secret, rec);
     rec.clear();
 
     std::cout << "Measuring client setup/registration (" << kSetupMeasuredRuns << " runs)...\n";
-    for (int i = 0; i < kSetupMeasuredRuns; ++i) run_setup_and_registration(ctx, params, rec);
+    ClientPublicMaterial pub;
+    for (int i = 0; i < kSetupMeasuredRuns; ++i) pub = run_setup_and_registration(ctx, params, secret, rec);
 
-    std::cout << "\n=== Client setup / registration latency ===\n";
+    std::cout << "\n=== Client setup / registration latency (seeded) ===\n";
     rec.print_summary();
-
-    ClientSecretMaterial secret = generate_client_secret_material(ctx, params);
-    ClientPublicMaterial pub = generate_client_public_material(ctx, secret);
 
     LatencyRecorder query_rec;
 
@@ -308,7 +303,7 @@ int main(int argc, char** argv) {
     std::cout << "Measuring per-query pipeline (" << kQueryMeasuredRuns << " runs)...\n";
     for (int i = 0; i < kQueryMeasuredRuns; ++i) run_one_query(ctx, params, secret, pub, rng, query_rec);
 
-    std::cout << "\n=== Per-query latency (simulated " << params.num_servers << "-server deployment, "
+    std::cout << "\n=== Per-query latency (simulated " << params.num_servers << "-server deployment, seeded, "
               << "compute-only, no network cost) ===\n";
     query_rec.print_summary();
 
@@ -318,9 +313,9 @@ int main(int argc, char** argv) {
             << params.clusters_per_server << " (of " << params.num_clusters << " total clusters)\n";
         out << "OpenMP max threads: " << omp_get_max_threads() << "\n\n";
         print_params(out, params, params_source);
-        out << "=== Client setup / registration latency ===\n";
+        out << "=== Client setup / registration latency (seeded) ===\n";
         rec.print_summary(out);
-        out << "\n=== Per-query latency (compute-only, no network cost) ===\n";
+        out << "\n=== Per-query latency (seeded, compute-only, no network cost) ===\n";
         query_rec.print_summary(out);
         std::cout << "\nResults written to " << kOutputFilePath << "\n";
     } else {

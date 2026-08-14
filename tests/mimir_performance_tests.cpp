@@ -94,8 +94,9 @@ void perf_test_sequential(){
         score_ciphertexts.push_back(RLWECT(out_ct));
     }  
 
-    /// Prepare the LWE for the PIR (To choose the cluster) 
-    LWEToRGSWKeySwitchKey lwe_to_rgsw_ksk(*lwe_sk, *gadget_sk, *gadget_sk);
+    /// Prepare the LWE for the PIR (To choose the cluster)
+    auto lwe_to_rlwe_ksk_ptr = std::make_shared<LWEToRLWEKeySwitchKey>(*lwe_sk, *gadget_sk);
+    LWEToRGSWKeySwitchKey lwe_to_rgsw_ksk(lwe_to_rlwe_ksk_ptr, *gadget_sk);
 
     // The client prepares the cluster choice query, that consists of GadgetLWE ciphertexts that encrypt 0, 
     // except for the one that corresponds to the cluster that the client wants to choose.
