@@ -67,10 +67,23 @@ struct Params {
 /// copyable value type while this holds the actual library objects.
 struct CryptoContext {
     std::shared_ptr<const FHEDeck::RLWEParam> rlwe_param;
-    std::shared_ptr<FHEDeck::SignedDecompositionGadget> gadget;
+    // Two separate gadgets, deliberately NOT one shared object:
+    //   gadget_ksk:  used only for LWEToRLWEKeySwitchKey's automorphism
+    //                keys. Base = decomposition_base_ksk.
+    //   gadget_rgsw: used for the RGSW ciphertext's own internal structure
+    //                (message*sk row, and later decomposing incoming
+    //                ciphertexts in RLWEGadgetCT::mul). Base =
+    //                decomposition_base_prime -- MUST match whatever base
+    //                the client's LWEGadgetCT (LWE') was built with.
+    // See LWEToRGSWKeySwitchKey's two-argument constructor for why these
+    // can't be the same object: reusing one gadget for both jobs silently
+    // couples decomposition_base_ksk and decomposition_base_prime together,
+    // even though they serve genuinely unrelated purposes.
+    std::shared_ptr<FHEDeck::SignedDecompositionGadget> gadget_ksk;
+    std::shared_ptr<FHEDeck::SignedDecompositionGadget> gadget_rgsw;
     FHEDeck::PlaintextEncoding encoding{FHEDeck::PlaintextEncodingType::full_domain, 0, 0};
 
-    /// Builds rlwe_param / gadget / encoding from a Params instance.
+    /// Builds rlwe_param / both gadgets / encoding from a Params instance.
     static CryptoContext from_params(const Params& params);
 };
 

@@ -56,18 +56,18 @@ void Params::derive_dependent_parameters() {
 
     Params p;
     // Verified working via sanity_check.cpp (LWE -> RLWE -> decrypt round trip).
-    p.n = 4096;//4096;
-    p.q = 102445068478701569;
+    p.n = 2048;
+    p.q = 281474976694273;
     p.sigma = 3.2;
-    p.plaintext_modulus = 12288; //71;
+    p.plaintext_modulus = 71;
     p.decomposition_base_ksk = 4; // 16
-    p.decomposition_base_prime = 4; // 16
+    p.decomposition_base_prime = 8; // 16
     // you settled on for the RGSW switch.
 
-    p.database_size = 3213835; // most tests pin this locally anyway (splits_per_cluster == 1);
+    p.database_size = 321383; // most tests pin this locally anyway (splits_per_cluster == 1);
     p.embedding_length = 4; //4;
-    p.embedding_precision = 4; //2; // signed range [-2, 1]
-    p.num_clusters = 128; //4;
+    p.embedding_precision = 2; //2; // signed range [-2, 1]
+    p.num_clusters = 24; //4;
     p.num_servers = 10;
     p.desired_cluster_index = 2;
 
@@ -101,15 +101,18 @@ void Params::derive_dependent_parameters() {
 
 
 
-CryptoContext CryptoContext::from_params(const Params& params) {
+    CryptoContext CryptoContext::from_params(const Params& params) {
     CryptoContext ctx;
     ctx.rlwe_param = std::make_shared<const FHEDeck::RLWEParam>(
         FHEDeck::RingType::negacyclic, params.n, params.q, FHEDeck::PolynomialArithmetic::ntt64);
-    ctx.gadget = std::make_shared<FHEDeck::SignedDecompositionGadget>(
+    ctx.gadget_ksk = std::make_shared<FHEDeck::SignedDecompositionGadget>(
         params.n, params.q, params.decomposition_base_ksk);
+    ctx.gadget_rgsw = std::make_shared<FHEDeck::SignedDecompositionGadget>(
+        params.n, params.q, params.decomposition_base_prime);
     ctx.encoding = FHEDeck::PlaintextEncoding(
         FHEDeck::PlaintextEncodingType::full_domain, params.plaintext_modulus, params.q);
     return ctx;
 }
+
 
 } // namespace psearch

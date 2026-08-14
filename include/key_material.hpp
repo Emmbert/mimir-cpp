@@ -22,11 +22,17 @@ namespace psearch {
 
 struct ClientSecretMaterial {
     std::shared_ptr<FHEDeck::RLWESK> rlwe_sk;
-    std::shared_ptr<FHEDeck::RLWEGadgetSK> rlwe_gadget_sk;
+    // Two RLWEGadgetSK objects wrapping the SAME rlwe_sk, but different
+    // gadgets -- see CryptoContext's gadget_ksk/gadget_rgsw and
+    // LWEToRGSWKeySwitchKey's two-argument constructor for why these can't
+    // share one gadget object.
+    std::shared_ptr<FHEDeck::RLWEGadgetSK> rlwe_gadget_sk_ksk;  // for LWEToRLWEKeySwitchKey
+    std::shared_ptr<FHEDeck::RLWEGadgetSK> rlwe_gadget_sk_rgsw; // for LWEToRGSWKeySwitchKey
     std::shared_ptr<FHEDeck::LWESK> lwe_sk;
-    // Needed to gadget-encrypt LWE messages (LWEGadgetCT) — the input format
+    // Needed to gadget-encrypt LWE messages (LWEGadgetCT) -- the input format
     // the LWE->RGSW key switch expects. Used for the cluster-selection unit
-    // vector in Step 4 of the protocol.
+    // vector in Step 4 of the protocol. Its base (decomposition_base_prime)
+    // must match gadget_rgsw's base -- see key_material.cpp.
     std::shared_ptr<FHEDeck::LWEGadgetSK> lwe_gadget_sk;
 };
 
