@@ -71,6 +71,11 @@ MIMIR_TEST_PARAMS_FILE=<parameters_file> ctest --output-on-failure
 MIMIR_TEST_PARAMS_FILE=<parameters_file> ./test_lwe_to_rlwe_roundtrip
 ```
 
+To run the database test with an actual database file:
+```bash
+MIMIR_TEST_DATABASE_FILE=../cpp_database_files/db_MSMarco_5100_l10_rho2_c2.mdb ./test_real_database_loading
+```
+
 ### For running the benchmarks
 
 Single-threaded:

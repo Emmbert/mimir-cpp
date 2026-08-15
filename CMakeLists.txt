@@ -50,6 +50,8 @@ add_library(mimir_core
         src/seeded_distribution.cpp
         src/seeded_eval_keys.cpp
         src/seeded_query.cpp
+        src/server_db.cpp
+        src/database_metadata.cpp
         #src/timing.cpp
         #src/channel.cpp
         #src/server_db.cpp
@@ -186,6 +188,24 @@ target_link_libraries(test_full_scoring_with_splits_seeded_parallel PRIVATE
 gtest_discover_tests(test_full_scoring_with_splits_seeded_parallel
         DISCOVERY_MODE PRE_TEST
 )
+
+
+# ----- Tests for the server setup ------
+add_executable(test_server_database_value_range tests/test_server_database_value_range.cpp)
+target_link_libraries(test_server_database_value_range PRIVATE mimir_core GTest::gtest_main)
+gtest_discover_tests(test_server_database_value_range DISCOVERY_MODE PRE_TEST)
+
+add_executable(test_real_database_loading tests/test_real_database_loading.cpp)
+target_link_libraries(test_real_database_loading PRIVATE mimir_core GTest::gtest_main)
+gtest_discover_tests(test_real_database_loading DISCOVERY_MODE PRE_TEST)
+
+add_executable(test_database_scoring_correctness tests/test_database_scoring_correctness.cpp)
+target_link_libraries(test_database_scoring_correctness PRIVATE mimir_core GTest::gtest_main)
+gtest_discover_tests(test_database_scoring_correctness DISCOVERY_MODE PRE_TEST)
+
+add_executable(test_database_scoring_correctness_with_splits tests/test_database_scoring_correctness_with_splits.cpp)
+target_link_libraries(test_database_scoring_correctness_with_splits PRIVATE mimir_core GTest::gtest_main)
+gtest_discover_tests(test_database_scoring_correctness_with_splits DISCOVERY_MODE PRE_TEST)
 
 # ------ Latency Benchmarks ------
 find_package(OpenMP REQUIRED)

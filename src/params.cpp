@@ -75,6 +75,39 @@ void Params::derive_dependent_parameters() {
     return p;
 }
 
+    constexpr const char* Params::kTestDatabaseFilePath;
+
+    Params Params::make_test_database_params() {
+        Params p;
+        p.n = 4096;
+        p.q = 281474976694273; // ~2^48, same modulus used throughout earlier examples
+        p.sigma = 3.2;
+        p.plaintext_modulus = 103; // generous margin: dot_product_can_overflow's
+        // worst case here is 192*8*8=12288, well under 65536/2
+        p.decomposition_base_ksk = 4;
+        p.decomposition_base_prime = 8;
+
+        p.database_size = 5100;
+        p.embedding_length = 10;
+        p.embedding_precision = 2;
+        p.num_clusters = 2;
+        p.num_servers = 1;
+        p.desired_cluster_index = 0;
+
+        p.derive_dependent_parameters();
+        return p;
+    }
+
+    Params Params::make_test_database_params_with_splits() {
+        Params p = make_test_database_params();
+        p.n = 2048; // splits_per_cluster = ceil(2550/2048) = 2 per cluster --
+        // first split fully real, second split 502 real + 1546
+        // zero-padded, exercising the padding path against real data.
+        p.derive_dependent_parameters();
+        return p;
+    }
+
+
     Params Params::make_benchmark_params() {
     Params p;
     p.n = 2048;
@@ -90,8 +123,8 @@ void Params::derive_dependent_parameters() {
     p.embedding_length = 64;
     p.embedding_precision = 4;
     p.num_clusters = 24;
-    p.num_servers = 10; // single-machine, single-threaded benchmark
-    p.desired_cluster_index = 0; // arbitrary; doesn't affect timing meaningfully
+    p.num_servers = 10;
+    p.desired_cluster_index = 0;
 
     p.database_size = 3213835;
 

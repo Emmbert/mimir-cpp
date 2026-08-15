@@ -1,0 +1,7 @@
+{
+  "precision": 2,
+  "scale": 7.0786662101745605,
+  "dtype": "int8",
+  "embedding_length": 10,
+  "normalized": true
+}

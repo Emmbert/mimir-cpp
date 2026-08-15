@@ -1,5 +1,7 @@
 #include "db_polynomial.hpp"
 
+#include <stdexcept>
+
 namespace psearch {
 
 int64_t min_embedding_value(const Params& params) {
@@ -83,28 +85,35 @@ DatabasePolynomial build_random_database_polynomial(const Params& params, std::m
     return DatabasePolynomial{std::move(poly), std::move(raw_values)};
 }
 
-DatabasePolynomialEvalForm build_random_database_polynomial_eval_form(const CryptoContext& ctx,
-                                                                       const Params& params,
-                                                                       std::mt19937_64& rng) {
-    // Coefficient-form Polynomial is only a transient intermediate here —
-    // sampled, converted to eval form immediately below, then discarded.
-    // Once ServerDatabase stores everything in eval form directly, this is
-    // exactly where that construction lives; nothing coefficient-form ever
-    // needs to leave this function.
-    FHEDeck::Polynomial poly(params.n, params.q);
-    std::vector<int64_t> raw_values(static_cast<size_t>(params.n));
+DatabasePolynomialEvalForm build_database_polynomial_eval_form_from_raw_values(const CryptoContext& ctx,
+                                                                                const Params& params,
+                                                                                const std::vector<int64_t>& raw_values) {
+    if (static_cast<int64_t>(raw_values.size()) != params.n) {
+        throw std::invalid_argument(
+            "build_database_polynomial_eval_form_from_raw_values: raw_values.size() (" +
+            std::to_string(raw_values.size()) + ") must equal params.n (" + std::to_string(params.n) + ")");
+    }
 
+    FHEDeck::Polynomial poly(params.n, params.q);
     for (int64_t i = 0; i < params.n; ++i) {
-        SignedValue v = sample_signed_value(params, rng);
-        poly[i] = v.reduced;
-        raw_values[static_cast<size_t>(i)] = v.raw;
+        poly[i] = reduce_mod(raw_values[static_cast<size_t>(i)], params.plaintext_modulus);
     }
 
     std::shared_ptr<FHEDeck::PolynomialEvalForm> poly_eval =
         ctx.rlwe_param->mul_engine()->init_polynomial_eval_form();
     poly.to_eval(*poly_eval, ctx.rlwe_param->mul_engine());
 
-    return DatabasePolynomialEvalForm{std::move(poly_eval), std::move(raw_values)};
+    return DatabasePolynomialEvalForm{std::move(poly_eval), raw_values};
+}
+
+DatabasePolynomialEvalForm build_random_database_polynomial_eval_form(const CryptoContext& ctx,
+                                                                       const Params& params,
+                                                                       std::mt19937_64& rng) {
+    std::vector<int64_t> raw_values(static_cast<size_t>(params.n));
+    for (int64_t i = 0; i < params.n; ++i) {
+        raw_values[static_cast<size_t>(i)] = sample_signed_value(params, rng).raw;
+    }
+    return build_database_polynomial_eval_form_from_raw_values(ctx, params, raw_values);
 }
 
 } // namespace psearch

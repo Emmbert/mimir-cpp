@@ -121,6 +121,18 @@ struct DatabasePolynomialEvalForm {
     std::vector<int64_t> raw_values; // true signed samples, for overflow-checking in tests
 };
 
+/// Builds one DatabasePolynomialEvalForm from EXPLICIT raw signed
+/// coefficients (length params.n): reduces each mod plaintext_modulus and
+/// converts to eval form. This is the actual construction step both
+/// build_random_database_polynomial_eval_form (random sampling) and
+/// ServerDatabase::build_split (real loaded data) go through -- factored
+/// out here so the two paths share one implementation and can't silently
+/// drift apart from each other.
+/// @throws std::invalid_argument if raw_values.size() != params.n.
+DatabasePolynomialEvalForm build_database_polynomial_eval_form_from_raw_values(const CryptoContext& ctx,
+                                                                                const Params& params,
+                                                                                const std::vector<int64_t>& raw_values);
+
 /// Builds one DatabasePolynomialEvalForm of degree params.n. Requires a
 /// CryptoContext (specifically its rlwe_param->mul_engine()) to perform the
 /// coefficient-form -> eval-form conversion internally.

@@ -57,6 +57,12 @@ struct Params {
     /// Convenience factory: small parameters for the correctness tests.
     static Params make_test_params();
 
+    static constexpr const char* kTestDatabaseFilePath = "../cpp_database_files/test_db_MSMarco_5100_l10_rho2_c2.mdb";
+
+    static Params make_test_database_params();
+
+    static Params make_test_database_params_with_splits();
+
     /// Convenience factory: realistic-size parameters for the latency benchmark.
     static Params make_benchmark_params();
 };
