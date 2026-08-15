@@ -1,0 +1,18 @@
+{
+    "B_BASE_DIGIT_KS": 4,
+    "B_BASE_DIGIT_PRIME": 8,
+    "C_NUM_CLUSTERS": 2,
+    "d_DECOMP_VEC_LEN_KS": 24,
+    "d_DECOMP_VEC_LEN_PRIME": 16,
+    "EMBEDDING_PRECISION": 2,
+    "l_EMBEDDING_DIM": 10,
+    "n_LATTICE_DIMENSION": 2048,
+    "N_NUM_DOCS": 5100,
+    "PLAINTEXT_MODULUS": 103,
+    "pr_COMP_RING_MODULUS": 103,
+    "q_CIPHERTEXT_MODULUS": 281474976694273,
+    "q_log2": "2^48",
+    "r_NUM_COMP_RINGS": 1,
+    "result_type": "hand-picked test parameters -- NOT security-analyzed",
+    "sigma_STANDARD_DEV": 3.2
+}

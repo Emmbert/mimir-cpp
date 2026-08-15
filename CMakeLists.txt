@@ -52,6 +52,10 @@ add_library(mimir_core
         src/seeded_query.cpp
         src/server_db.cpp
         src/database_metadata.cpp
+        src/server_query_processing.cpp
+        src/server_session.cpp
+        src/wire_protocol.cpp
+        src/network.cpp
         #src/timing.cpp
         #src/channel.cpp
         #src/server_db.cpp
@@ -190,7 +194,7 @@ gtest_discover_tests(test_full_scoring_with_splits_seeded_parallel
 )
 
 
-# ----- Tests for the server setup ------
+# ----- Tests for the server setup and serving ------
 add_executable(test_server_database_value_range tests/test_server_database_value_range.cpp)
 target_link_libraries(test_server_database_value_range PRIVATE mimir_core GTest::gtest_main)
 gtest_discover_tests(test_server_database_value_range DISCOVERY_MODE PRE_TEST)
@@ -206,6 +210,23 @@ gtest_discover_tests(test_database_scoring_correctness DISCOVERY_MODE PRE_TEST)
 add_executable(test_database_scoring_correctness_with_splits tests/test_database_scoring_correctness_with_splits.cpp)
 target_link_libraries(test_database_scoring_correctness_with_splits PRIVATE mimir_core GTest::gtest_main)
 gtest_discover_tests(test_database_scoring_correctness_with_splits DISCOVERY_MODE PRE_TEST)
+
+add_executable(test_wire_protocol_roundtrip tests/test_wire_protocol_roundtrip.cpp)
+target_link_libraries(test_wire_protocol_roundtrip PRIVATE mimir_core GTest::gtest_main)
+gtest_discover_tests(test_wire_protocol_roundtrip DISCOVERY_MODE PRE_TEST)
+
+add_executable(test_process_query_correctness tests/test_process_query_correctness.cpp)
+target_link_libraries(test_process_query_correctness PRIVATE mimir_core GTest::gtest_main OpenMP::OpenMP_CXX)
+gtest_discover_tests(test_process_query_correctness DISCOVERY_MODE PRE_TEST)
+
+add_executable(test_server_session tests/test_server_session.cpp)
+target_link_libraries(test_server_session PRIVATE mimir_core GTest::gtest_main)
+gtest_discover_tests(test_server_session DISCOVERY_MODE PRE_TEST)
+
+add_executable(test_server_database_uniform_cluster_sizes tests/test_database_uniform_cluster_sizes.cpp)
+target_link_libraries(test_server_database_uniform_cluster_sizes PRIVATE mimir_core GTest::gtest_main)
+gtest_discover_tests(test_server_database_uniform_cluster_sizes DISCOVERY_MODE PRE_TEST)
+
 
 # ------ Latency Benchmarks ------
 find_package(OpenMP REQUIRED)
@@ -229,3 +250,8 @@ target_link_libraries(benchmark_latency_seeded_parallel PRIVATE mimir_core OpenM
 
 add_executable(benchmark_latency_seeded_distributed benchmarks/benchmark_latency_seeded_distributed.cpp)
 target_link_libraries(benchmark_latency_seeded_distributed PRIVATE mimir_core OpenMP::OpenMP_CXX)
+
+
+# ----- Server and Client Application ------
+add_executable(server apps/server.cpp)
+target_link_libraries(server PRIVATE mimir_core OpenMP::OpenMP_CXX)

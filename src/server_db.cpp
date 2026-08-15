@@ -125,4 +125,17 @@ void validate_value_range(const ServerDatabase& db, const Params& params) {
     }
 }
 
+void validate_uniform_cluster_sizes(const ServerDatabase& db, const Params& params) {
+    for (int64_t c = 0; c < db.num_clusters(); ++c) {
+        if (db.cluster_size(c) != params.cluster_size) {
+            throw std::runtime_error(
+                "validate_uniform_cluster_sizes: cluster " + std::to_string(c) + " has size " +
+                std::to_string(db.cluster_size(c)) + ", but params.cluster_size (database_size / num_clusters) is " +
+                std::to_string(params.cluster_size) +
+                ". Query processing assumes every cluster has the same size -- if that's no longer true for "
+                "this database, splits_per_cluster needs to be handled per-cluster, not uniformly.");
+        }
+    }
+}
+
 } // namespace psearch

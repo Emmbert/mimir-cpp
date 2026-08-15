@@ -98,3 +98,15 @@ Simulation over several worker machines, specified in params.cpp:
 cmake --build . -j
 ./benchmark_latency_distributed <parameters_file> <number_vms> <desired_cluster_index>
 ```
+
+
+### Start Server and Client Applications
+
+The database used by the server is loaded from xxx.
+
+Start the server with:
+```bash
+./server ../parameter_files/<scheme parameters file> ../cpp_database_files/<database file> 8080```
+./server ../parameter_files/test_database_params_with_splits.json ../cpp_database_files/test_db_MSMarco_5100_l10_rho2_c2.mdb 8080```
+```
+
