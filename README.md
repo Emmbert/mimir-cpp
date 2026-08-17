@@ -76,6 +76,15 @@ To run the database test with an actual database file:
 MIMIR_TEST_DATABASE_FILE=../cpp_database_files/db_MSMarco_5100_l10_rho2_c2.mdb ./test_real_database_loading
 ```
 
+To run just a subgroup of all tests:
+```bash
+ctest -L crypto          # only the crypto/protocol correctness tests
+ctest -L server_client   # only the server/database/client tests
+ctest -LE crypto         # everything except crypto (same set as above here, but useful in general)
+ctest -L crypto -L database    # NOTE: this is AND-of-neither-quite -- see caveat below
+ctest --print-labels     # confirm both labels registered correctly
+# ```
+
 ### For running the benchmarks
 
 Single-threaded:
@@ -110,3 +119,8 @@ Start the server with:
 ./server ../parameter_files/test_database_params_with_splits.json ../cpp_database_files/test_db_MSMarco_5100_l10_rho2_c2.mdb 8080```
 ```
 
+Run clint queries from seperate process:
+```bash
+./client ../parameter_files/<scheme parameters file> 127.0.0.1 8080
+./client ../parameter_files/test_database_params_with_splits.json 127.0.0.1 8080
+```

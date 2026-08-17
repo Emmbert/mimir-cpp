@@ -19,7 +19,7 @@ int64_t max_abs_embedding_value(const Params& params) {
 bool products_can_overflow(const Params& params) {
     int64_t max_abs = max_abs_embedding_value(params);
     // Worst case: both factors at max magnitude, e.g. (-8)*(-8) = 64.
-    return (max_abs * max_abs) >= (params.plaintext_modulus / 2);
+    return (max_abs * max_abs) >= ((params.plaintext_modulus + 1) / 2);
 }
 
 bool dot_product_can_overflow(const Params& params) {
@@ -27,7 +27,7 @@ bool dot_product_can_overflow(const Params& params) {
     // Worst case: every one of embedding_length terms at max magnitude with
     // matching signs, e.g. l * (-8)*(-8).
     __int128 worst_case = max_abs * max_abs * static_cast<__int128>(params.embedding_length);
-    return worst_case >= static_cast<__int128>(params.plaintext_modulus / 2);
+    return worst_case >= static_cast<__int128>((params.plaintext_modulus + 1) / 2);
 }
 
 int64_t reduce_mod(int64_t value, int64_t modulus) {

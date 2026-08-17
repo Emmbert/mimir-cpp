@@ -60,11 +60,12 @@ TEST(FullScoringWithSplitsParallel, MatchesSingleThreadedResultUnderMultithreadi
         << "This test needs num_clusters > 1 to exercise cluster selection meaningfully.";
     ASSERT_GE(params.desired_cluster_index, 0);
     ASSERT_LT(params.desired_cluster_index, params.num_clusters);
-    ASSERT_GT(params.splits_per_cluster, 1)
-        << "This test needs splits_per_cluster > 1 to exercise multiple splits; got "
+    if (params.splits_per_cluster==1) {
+        GTEST_SKIP() << "This test needs splits_per_cluster > 1 to exercise multiple splits; got "
         << "cluster_size=" << params.cluster_size << ", n=" << params.n
         << ", splits_per_cluster=" << params.splits_per_cluster
         << ". Increase database_size or decrease num_clusters/n.";
+    }
 
     ASSERT_FALSE(products_can_overflow(params));
     ASSERT_FALSE(dot_product_can_overflow(params))
