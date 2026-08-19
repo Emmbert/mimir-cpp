@@ -76,36 +76,59 @@ TEST_P(FullScoringWithSplitsSeededParallel, EachSplitProducesCorrectResultUsingS
         << params.embedding_length << ") and plaintext_modulus (" << params.plaintext_modulus
         << ") are incompatible for a single split's dot product.";
 
+    std::cout << "[log] building CryptoContext from params..." << std::flush;
     CryptoContext ctx = CryptoContext::from_params(params);
+    std::cout << " done.\n" << std::flush;
     ASSERT_EQ(static_cast<int64_t>(ctx.component_encodings.size()), params.num_component_rings);
 
     int64_t r = params.num_component_rings;
     int64_t combined_modulus = (r == 1) ? params.plaintext_modulus : params.combined_component_ring_modulus;
     int64_t total_pairs = params.num_clusters * params.splits_per_cluster;
 
+    std::cout << "[log] num_component_rings=" << r << ", combined_modulus=" << combined_modulus
+               << ", total (cluster,split) pairs=" << total_pairs
+               << ", omp_max_threads=" << omp_get_max_threads() << "\n" << std::flush;
+
     constexpr int kNumIterations = 3;
     std::mt19937_64 rng(std::random_device{}());
 
     for (int iter = 0; iter < kNumIterations; ++iter) {
+        std::cout << "Iteration " << iter << " " << std::flush;
+
+        std::cout << "[log] generating client secret material..." << std::flush;
         ClientSecretMaterial secret = generate_client_secret_material(ctx, params);
+        std::cout << " done.\n" << std::flush;
 
         // --- Eval keys: seeded, wire-compressed, reconstructed. UNCHANGED
         // by CRT -- no dependency on plaintext modulus at all. -----------------------
+        std::cout << "[log] building seeded public material (eval key gen)..." << std::flush;
         SeededClientPublicMaterial eval_wire = build_seeded_public_material(ctx, secret);
+        std::cout << " done.\n" << std::flush;
+
+        std::cout << "[log] reconstructing public material (eval key unpack)..." << std::flush;
         ClientPublicMaterial pub = reconstruct_public_material(ctx, params, eval_wire);
+        std::cout << " done.\n" << std::flush;
 
         // --- Query: sample embedding values, seed-compress (build_seeded_query
         // handles CRT-splitting internally), reconstruct. -------------------------------
+        std::cout << "[log] sampling embedding values (embedding_length=" << params.embedding_length
+                   << ")..." << std::flush;
         std::vector<SignedValue> messages(static_cast<size_t>(params.embedding_length));
         std::vector<int64_t> embedding_values(static_cast<size_t>(params.embedding_length));
         for (int64_t j = 0; j < params.embedding_length; ++j) {
             messages[static_cast<size_t>(j)] = sample_signed_value(params, rng);
             embedding_values[static_cast<size_t>(j)] = reduce_mod(messages[j].raw, combined_modulus);  // messages[static_cast<size_t>(j)].reduced;
         }
+        std::cout << " done.\n" << std::flush;
 
+        std::cout << "[log] building seeded query (query gen, CRT-aware)..." << std::flush;
         SeededQuery query_wire =
             build_seeded_query(ctx, params, secret, embedding_values, params.desired_cluster_index);
+        std::cout << " done.\n" << std::flush;
+
+        std::cout << "[log] reconstructing query (query unpack)..." << std::flush;
         ReconstructedQuery query = reconstruct_query(ctx, params, query_wire);
+        std::cout << " done.\n" << std::flush;
         ASSERT_EQ(static_cast<int64_t>(query.embedding_cts.size()), r);
 
         // --- Switch reconstructed embedding ciphertexts to RLWE/eval form,
@@ -117,6 +140,8 @@ TEST_P(FullScoringWithSplitsSeededParallel, EachSplitProducesCorrectResultUsingS
         }
 
         int64_t total_query_terms = r * params.embedding_length;
+        std::cout << "[log] RLWE ciphertext switching for embedding cts (parallel, " << total_query_terms
+                   << " terms across " << r << " ring(s))..." << std::flush;
         #pragma omp parallel for schedule(dynamic)
         for (int64_t idx = 0; idx < total_query_terms; ++idx) {
             int64_t ring = idx / params.embedding_length;
@@ -125,16 +150,28 @@ TEST_P(FullScoringWithSplitsSeededParallel, EachSplitProducesCorrectResultUsingS
             pub.lwe_to_rlwe_ksk->lwe_to_rlwe_key_switch(
                 rlwe_ct, query.embedding_cts[static_cast<size_t>(ring)][static_cast<size_t>(j)]);
             query_eval[static_cast<size_t>(ring)][static_cast<size_t>(j)] = std::make_unique<RLWECTEvalForm>(rlwe_ct);
+            #pragma omp critical(log_query_switch)
+            {
+                std::cout << " [term " << idx << "/thread " << omp_get_thread_num() << "]" << std::flush;
+            }
         }
+        std::cout << " done.\n" << std::flush;
 
         // --- Switch reconstructed selector ciphertexts to RGSW, using the
         // RECONSTRUCTED pub. UNCHANGED by CRT. -----------------------------------------
+        std::cout << "[log] RGSW ciphertext switching for selector cts (parallel, " << query.selector_cts.size()
+                   << " total)..." << std::flush;
         std::vector<std::unique_ptr<RLWEGadgetCT>> rgsw_ct(query.selector_cts.size());
         #pragma omp parallel for schedule(dynamic)
         for (int64_t c = 0; c < static_cast<int64_t>(query.selector_cts.size()); ++c) {
             RLWEGadgetCT rgsw = pub.lwe_to_rgsw_ksk->lwe_to_rlwe_key_switch(query.selector_cts[static_cast<size_t>(c)]);
             rgsw_ct[static_cast<size_t>(c)] = std::make_unique<RLWEGadgetCT>(std::move(rgsw));
+            #pragma omp critical(log_rgsw_switch)
+            {
+                std::cout << " [cluster " << c << "/thread " << omp_get_thread_num() << "]" << std::flush;
+            }
         }
+        std::cout << " done.\n" << std::flush;
 
         // --- Scoring: parallel over (cluster, split) ONLY -- see
         // test_full_scoring_with_splits_parallel.cpp's header for why this,
@@ -154,11 +191,20 @@ TEST_P(FullScoringWithSplitsSeededParallel, EachSplitProducesCorrectResultUsingS
         std::vector<std::mt19937_64> thread_rngs(static_cast<size_t>(omp_get_max_threads()));
         for (auto& tr : thread_rngs) tr.seed(rng());
 
+        std::cout << "[log] starting parallel scoring loop over " << total_pairs
+                   << " (cluster,split) pairs, rings=" << r << "...\n" << std::flush;
+
         #pragma omp parallel for schedule(dynamic)
         for (int64_t idx = 0; idx < total_pairs; ++idx) {
             int64_t c = idx / params.splits_per_cluster;
             int64_t s = idx % params.splits_per_cluster;
             std::mt19937_64& local_rng = thread_rngs[static_cast<size_t>(omp_get_thread_num())];
+
+            #pragma omp critical(log_scoring)
+            {
+                std::cout << "[log]   [thread " << omp_get_thread_num() << "] starting pair idx=" << idx
+                           << " (cluster=" << c << ", split=" << s << ")\n" << std::flush;
+            }
 
             std::vector<std::vector<int64_t>> split_raw_values; // [j], only populated if c == desired
             if (c == params.desired_cluster_index) {
@@ -198,9 +244,18 @@ TEST_P(FullScoringWithSplitsSeededParallel, EachSplitProducesCorrectResultUsingS
                 masked[static_cast<size_t>(s)][static_cast<size_t>(ring)][static_cast<size_t>(c)] =
                     std::make_unique<RLWECT>(masked_val);
             }
+
+            #pragma omp critical(log_scoring)
+            {
+                std::cout << "[log]   [thread " << omp_get_thread_num() << "] finished pair idx=" << idx
+                           << " (cluster=" << c << ", split=" << s << ")\n" << std::flush;
+            }
         }
 
+        std::cout << "[log] parallel scoring loop complete.\n" << std::flush;
+
         // --- Sequential reduction: sum over clusters, per split, per ring. ------------
+        std::cout << "[log] sequential reduction over clusters (per ring, per split)..." << std::flush;
         std::vector<std::vector<RLWECT>> final_result(static_cast<size_t>(r)); // [ring][s]
         for (int64_t ring = 0; ring < r; ++ring) {
             final_result[static_cast<size_t>(ring)].reserve(static_cast<size_t>(params.splits_per_cluster));
@@ -217,11 +272,15 @@ TEST_P(FullScoringWithSplitsSeededParallel, EachSplitProducesCorrectResultUsingS
                 }
             }
         }
+        std::cout << " done.\n" << std::flush;
 
         // --- Decrypt and verify EACH split's result independently, across
         // both rings, then recompose (a no-op when r==1) -- checked directly
         // against the desired cluster's raw values. -----------------------------------
+        std::cout << "[log] decrypting + recomposing + verifying " << params.splits_per_cluster
+                   << " splits...\n" << std::flush;
         for (int64_t s = 0; s < params.splits_per_cluster; ++s) {
+            std::cout << "[log]   split " << s << ": decrypting per ring..." << std::flush;
             std::vector<Vector> decrypted_per_ring;
             decrypted_per_ring.reserve(static_cast<size_t>(r));
             for (int64_t ring = 0; ring < r; ++ring) {
@@ -229,6 +288,7 @@ TEST_P(FullScoringWithSplitsSeededParallel, EachSplitProducesCorrectResultUsingS
                     final_result[static_cast<size_t>(ring)][static_cast<size_t>(s)],
                     ctx.component_encodings[static_cast<size_t>(ring)]));
             }
+            std::cout << " done. Verifying " << params.n << " coefficients..." << std::flush;
 
             const auto& raw_values_for_split = desired_cluster_raw_values[static_cast<size_t>(s)];
 
@@ -254,7 +314,10 @@ TEST_P(FullScoringWithSplitsSeededParallel, EachSplitProducesCorrectResultUsingS
                     << " (r=" << r << "): true_sum=" << true_sum << " decoded_signed=" << decoded_signed
                     << " (recomposed residue was " << recomposed << ").";
             }
+            std::cout << " done.\n" << std::flush;
         }
+
+        std::cout << "[log] iteration " << iter << " complete.\n" << std::flush;
     }
 }
 

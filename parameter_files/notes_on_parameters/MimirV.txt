@@ -1,0 +1,32 @@
+Mimir V
+
+we use best LATENCY
+
+Comparison:
+
+COMMUNICATION
+
+lambda=252.95_n=4096_q=82383072788561921_q_in_bits=57_sigma=3.20_bks=3_bprime=5_l=256_rho=3_dfr=9.1e-13.json
+
+stage                           n       mean(ms)    median(ms)  stddev(ms)  min(ms)     max(ms)
+client_query_gen (seeded)       10      297.329     297.154     1.16442     295.578     299.466
+server_processing               10      2023.21     2022.01     34.6323     1976.22     2069.08
+query unpacking                 10      22.8857     24.0033     2.70414     18.6687     25.7543
+RLWE ciphertext switching       10      381.139     380.535     2.68642     377.218     386.364
+RGSW ciphertext switching       10      1255.21     1256.8      35.8267     1204.82     1304.49
+scoring calculations            10      363.966     363.05      5.04037     357.831     374.393
+client_decrypt                  10      3.3614      3.43869     2.11677     0.256479    7.66553
+
+LATENCY
+
+lambda=248.51_n=4096_q=200412177423032321_q_in_bits=58_sigma=3.20_bks=3_bprime=13_l=256_rho=3_dfr=9.1e-13.json
+
+=== Per-query latency (seeded, full database in memory) ===
+stage                           n       mean(ms)    median(ms)  stddev(ms)  min(ms)     max(ms)
+client_query_gen (seeded)       10      265.256     262.188     7.86693     261.058     287.034
+server_processing               10      1535.51     1537.4      13.8794     1504.07     1551.91
+query unpacking                 10      18.0993     18.7602     1.59273     13.967      18.9265
+RLWE ciphertext switching       10      393.373     393.955     3.11363     387.171     397.828
+RGSW ciphertext switching       10      805.308     806.349     14.551      773.686     826.1
+scoring calculations            10      318.719     318.299     2.78722     315.478     323.778
+client_decrypt                  10      3.37933     3.4462      0.486443    2.57968     4.16372

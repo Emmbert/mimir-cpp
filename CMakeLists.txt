@@ -301,26 +301,33 @@ gtest_discover_tests(test_full_scoring_with_splits_seeded_parallel
 # directly, e.g. ./benchmark_latency_seeded_parallel.
 find_package(OpenMP REQUIRED)
 
-# benchmarks with full randomness a in ciphertexts
-add_executable(benchmark_latency benchmarks/benchmark_latency.cpp)
-target_link_libraries(benchmark_latency PRIVATE mimir_core)
+# sequential (no OpenMP)
+foreach(bench
+        benchmark_latency
+        benchmark_latency_pool
+        benchmark_latency_seeded
+        benchmark_latency_seeded_pool)
+    add_executable(${bench} benchmarks/${bench}.cpp)
+    target_link_libraries(${bench} PRIVATE mimir_core)
+endforeach()
 
-add_executable(benchmark_latency_parallel benchmarks/benchmark_latency_parallel.cpp)
-target_link_libraries(benchmark_latency_parallel PRIVATE mimir_core OpenMP::OpenMP_CXX)
+# parallel (OpenMP)
+foreach(bench
+        benchmark_latency_parallel
+        benchmark_latency_parallel_pool
+        benchmark_latency_distributed
+        benchmark_latency_seeded_parallel
+        benchmark_latency_seeded_parallel_pool
+        benchmark_latency_seeded_distributed)
+    add_executable(${bench} benchmarks/${bench}.cpp)
+    target_link_libraries(${bench} PRIVATE mimir_core OpenMP::OpenMP_CXX)
+endforeach()
 
-add_executable(benchmark_latency_distributed benchmarks/benchmark_latency_distributed.cpp)
-target_link_libraries(benchmark_latency_distributed PRIVATE mimir_core OpenMP::OpenMP_CXX)
+add_executable(benchmark_switch_isolated benchmarks/benchmark_switch_isolated.cpp)
+target_link_libraries(benchmark_switch_isolated PRIVATE mimir_core)
 
-# benchmarks with seed
-add_executable(benchmark_latency_seeded benchmarks/benchmark_latency_seeded.cpp)
-target_link_libraries(benchmark_latency_seeded PRIVATE mimir_core)
-
-add_executable(benchmark_latency_seeded_parallel benchmarks/benchmark_latency_seeded_parallel.cpp)
-target_link_libraries(benchmark_latency_seeded_parallel PRIVATE mimir_core OpenMP::OpenMP_CXX)
-
-add_executable(benchmark_latency_seeded_distributed benchmarks/benchmark_latency_seeded_distributed.cpp)
-target_link_libraries(benchmark_latency_seeded_distributed PRIVATE mimir_core OpenMP::OpenMP_CXX)
-
+add_executable(benchmark_lwe_encrypt_count benchmarks/benchmark_lwe_encrypt_count.cpp)
+target_link_libraries(benchmark_lwe_encrypt_count PRIVATE mimir_core)
 
 # ----- Server and Client Application ------
 #add_executable(server apps/server.cpp)

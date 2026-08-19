@@ -103,6 +103,7 @@ Params load_params_from_json(const std::string& path, int64_t num_servers, int64
     }
 
     p.derive_dependent_parameters(); // also validates gadget bases and CRT parameters
+    print_params(std::cout, p, path);
     return p;
 }
 
