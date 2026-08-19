@@ -1,14 +1,18 @@
-// benchmark_latency_seeded_parallel.cpp
+// benchmark_latency_seeded_parallel_fulldb.cpp
 //
-// Combines benchmark_latency_seeded.cpp with benchmark_latency_parallel.cpp's
-// threading pattern: outer sequential loop over rings, inner parallel loop
-// identical to the pre-CRT structure. Database rebuilt fresh every query,
-// never timed. query.embedding_cts is already [ring][j] (reconstruct_query
-// is CRT-aware), so no manual per-ring encryption loop is needed.
+// Seeded + OpenMP-parallel latency benchmark, FULL-DATABASE variant. Combines
+// the seeded query/eval-key path with the parallel threading pattern (outer
+// sequential loop over rings, inner parallel loop). The entire database is
+// built ONCE per query and held resident (untimed), so scoring streams every
+// distinct DB polynomial as a real query does.
+//
+// WARNING: for large parameter sets the full database plus per-thread transient
+// working sets can exceed RAM and get OOM-killed. If that happens, use
+// benchmark_latency_seeded_parallel_pool.cpp instead.
 //
 // Run directly, with the desired thread count set via the environment:
-//   OMP_NUM_THREADS=16 ./benchmark_latency_seeded_parallel
-//   OMP_NUM_THREADS=16 ./benchmark_latency_seeded_parallel params.json 1
+//   OMP_NUM_THREADS=16 ./benchmark_latency_seeded_parallel_fulldb
+//   OMP_NUM_THREADS=16 ./benchmark_latency_seeded_parallel_fulldb params.json 1
 
 #include <omp.h>
 
@@ -18,6 +22,7 @@
 #include <memory>
 #include <random>
 #include <vector>
+#include <filesystem>
 
 #include "crt.hpp"
 #include "db_polynomial.hpp"
@@ -36,18 +41,28 @@ using namespace psearch;
 namespace {
 
 constexpr int kSetupWarmupRuns = 2;
-constexpr int kSetupMeasuredRuns = 20;
+constexpr int kSetupMeasuredRuns = 10;
 
 constexpr int kQueryWarmupRuns = 2;
-constexpr int kQueryMeasuredRuns = 20;
+constexpr int kQueryMeasuredRuns = 100;
 
-const char* kOutputFilePath = "benchmark_latency_seeded_parallel_results.txt";
+std::filesystem::path compute_output_path(const std::string& params_arg) {
+    const std::string base_name = "benchmark_latency_seeded_parallel_results.txt";
 
-constexpr int64_t kDatabasePoolSize = 32; // fixed, independent of total_pairs -- see
-                                           // benchmark_latency_parallel.cpp's header for the
-                                           // memory/latency-validity reasoning.
+    if (params_arg.empty()) {
+        return std::filesystem::path(base_name);
+    }
 
-using DbPool = std::vector<std::vector<std::vector<DatabasePolynomialEvalForm>>>; // [pool_idx][j][ring]
+    std::filesystem::path param_path(params_arg);
+    std::string stem = param_path.stem().string(); // "mimirI.json" -> "mimirI"
+
+    std::filesystem::create_directories(stem); // no-op if it already exists
+    return std::filesystem::path(stem) / base_name;
+}
+
+// Full database, laid out [c][s][ring][j] so db_eval[c][s][ring] is directly
+// the length-l vector compute_split_score wants -- no per-j gather needed.
+using DbEval = std::vector<std::vector<std::vector<std::vector<DatabasePolynomialEvalForm>>>>; // [c][s][ring][j]
 
 RLWECT compute_split_score(const CryptoContext& ctx, const std::vector<std::unique_ptr<RLWECTEvalForm>>& query_eval,
                             const std::vector<DatabasePolynomialEvalForm>& db_split) {
@@ -60,29 +75,45 @@ RLWECT compute_split_score(const CryptoContext& ctx, const std::vector<std::uniq
     return RLWECT(score_eval);
 }
 
-/// Untimed preprocessing -- see benchmark_latency_parallel.cpp's
-/// build_database_pool for the full reasoning.
-DbPool build_database_pool(const CryptoContext& ctx, const Params& params, std::mt19937_64& rng) {
-    DbPool pool(static_cast<size_t>(kDatabasePoolSize));
+/// Untimed preprocessing. Builds the FULL database in parallel, freeing each
+/// polynomial's raw_values (test-only, never read during scoring).
+DbEval build_database(const CryptoContext& ctx, const Params& params, std::mt19937_64& rng) {
+    int64_t r = params.num_component_rings;
+    DbEval db_eval(static_cast<size_t>(params.num_clusters));
+    for (int64_t c = 0; c < params.num_clusters; ++c) {
+        db_eval[static_cast<size_t>(c)].resize(static_cast<size_t>(params.splits_per_cluster)); // pre-size serially
+    }
 
+    int64_t total_pairs = params.num_clusters * params.splits_per_cluster;
     std::vector<std::mt19937_64> thread_rngs(static_cast<size_t>(omp_get_max_threads()));
     for (auto& tr : thread_rngs) tr.seed(rng());
 
     #pragma omp parallel for schedule(dynamic)
-    for (int64_t p = 0; p < kDatabasePoolSize; ++p) {
+    for (int64_t idx = 0; idx < total_pairs; ++idx) {
+        int64_t c = idx / params.splits_per_cluster;
+        int64_t s = idx % params.splits_per_cluster;
         std::mt19937_64& local_rng = thread_rngs[static_cast<size_t>(omp_get_thread_num())];
 
-        auto& entry = pool[static_cast<size_t>(p)];
-        entry.resize(static_cast<size_t>(params.embedding_length));
+        auto& entry = db_eval[static_cast<size_t>(c)][static_cast<size_t>(s)]; // [ring][j]
+        entry.resize(static_cast<size_t>(r));
+        for (int64_t ring = 0; ring < r; ++ring) {
+            entry[static_cast<size_t>(ring)].reserve(static_cast<size_t>(params.embedding_length));
+        }
         for (int64_t j = 0; j < params.embedding_length; ++j) {
             std::vector<int64_t> raw(static_cast<size_t>(params.n));
             for (int64_t i = 0; i < params.n; ++i) {
                 raw[static_cast<size_t>(i)] = sample_signed_value(params, local_rng).raw;
             }
-            entry[static_cast<size_t>(j)] = crt_split_database_polynomial_eval_form(ctx, params, raw);
+            std::vector<DatabasePolynomialEvalForm> split =
+                crt_split_database_polynomial_eval_form(ctx, params, raw); // one entry per ring
+            for (int64_t ring = 0; ring < r; ++ring) {
+                split[static_cast<size_t>(ring)].raw_values.clear();
+                split[static_cast<size_t>(ring)].raw_values.shrink_to_fit();
+                entry[static_cast<size_t>(ring)].push_back(std::move(split[static_cast<size_t>(ring)]));
+            }
         }
     }
-    return pool;
+    return db_eval;
 }
 
 ClientPublicMaterial run_setup_and_registration(const CryptoContext& ctx, const Params& params,
@@ -111,15 +142,15 @@ void run_one_query(const CryptoContext& ctx, const Params& params, ClientSecretM
     int64_t r = params.num_component_rings;
     int64_t total_pairs = params.num_clusters * params.splits_per_cluster;
 
-    DbPool db_pool = build_database_pool(ctx, params, rng); // untimed
+    DbEval db_eval = build_database(ctx, params, rng); // untimed
 
     SeededQuery query_wire;
+    std::vector<int64_t> embedding_values;
+    embedding_values.reserve(static_cast<size_t>(params.embedding_length));
+    for (int64_t j = 0; j < params.embedding_length; ++j) {
+        embedding_values.push_back(sample_signed_mod_value(params, rng));
+    }
     {
-        std::vector<int64_t> embedding_values;
-        embedding_values.reserve(static_cast<size_t>(params.embedding_length));
-        for (int64_t j = 0; j < params.embedding_length; ++j) {
-            embedding_values.push_back(sample_signed_mod_value(params, rng));
-        }
         ScopedTimer t(rec, "client_query_gen (seeded)");
         query_wire = build_seeded_query(ctx, params, secret, embedding_values, params.desired_cluster_index);
     }
@@ -187,12 +218,9 @@ void run_one_query(const CryptoContext& ctx, const Params& params, ClientSecretM
                     int64_t c = idx / params.splits_per_cluster;
                     int64_t s = idx % params.splits_per_cluster;
 
-                    const auto& slot = db_pool[static_cast<size_t>(idx % kDatabasePoolSize)];
-                    std::vector<DatabasePolynomialEvalForm> db_split;
-                    db_split.reserve(static_cast<size_t>(params.embedding_length));
-                    for (int64_t j = 0; j < params.embedding_length; ++j) {
-                        db_split.push_back(slot[static_cast<size_t>(j)][static_cast<size_t>(ring)]);
-                    }
+                    // Direct const ref into the full DB -- raw_values were freed at build time.
+                    const std::vector<DatabasePolynomialEvalForm>& db_split =
+                        db_eval[static_cast<size_t>(c)][static_cast<size_t>(s)][static_cast<size_t>(ring)];
 
                     RLWECT score = compute_split_score(ctx, query_eval[static_cast<size_t>(ring)], db_split);
 
@@ -216,13 +244,6 @@ void run_one_query(const CryptoContext& ctx, const Params& params, ClientSecretM
     {
         ScopedTimer t(rec, "client_decrypt");
 
-        // Decrypt every (split, ring) pair in parallel -- each thread
-        // writes its own (s, ring) slot, no shared state touched more than
-        // once. Structurally the same safety argument already relied on
-        // for RLWE/RGSW switching elsewhere in this file (read secret/
-        // public key material from multiple threads, no mutation) -- worth
-        // noting this specific call hasn't been exercised concurrently
-        // before, unlike the switching functions.
         std::vector<std::vector<Vector>> decrypted(static_cast<size_t>(params.splits_per_cluster)); // [s][ring]
         for (auto& row : decrypted) {
             row.resize(static_cast<size_t>(r));
@@ -238,9 +259,6 @@ void run_one_query(const CryptoContext& ctx, const Params& params, ClientSecretM
                 ctx.component_encodings[static_cast<size_t>(ring)]);
         }
 
-        // Recompose every coefficient of every split in parallel -- pure
-        // arithmetic, zero library calls, zero shared state (results are
-        // discarded, matching "benchmarks measure timing only").
         if (r == 2) {
             #pragma omp parallel for schedule(dynamic) collapse(2)
             for (int64_t s = 0; s < params.splits_per_cluster; ++s) {
@@ -262,6 +280,10 @@ int main(int argc, char** argv) {
     CryptoContext ctx = CryptoContext::from_params(params);
     std::cout << "OpenMP max threads: " << omp_get_max_threads() << "\n\n";
     print_params(std::cout, params, params_source);
+
+    const std::string params_arg = (argc >= 2) ? argv[1] : "";
+    const std::filesystem::path kOutputFilePath = compute_output_path(params_arg);
+
 
     std::mt19937_64 rng(std::random_device{}());
 
@@ -286,9 +308,12 @@ int main(int argc, char** argv) {
     query_rec.clear();
 
     std::cout << "Measuring per-query pipeline (" << kQueryMeasuredRuns << " runs)...\n";
-    for (int i = 0; i < kQueryMeasuredRuns; ++i) run_one_query(ctx, params, secret, pub, rng, query_rec);
+    for (int i = 0; i < kQueryMeasuredRuns; ++i) {
+        std::cout << "Iteration " << i << " " << std::flush;
+        run_one_query(ctx, params, secret, pub, rng, query_rec);
+    }
 
-    std::cout << "\n=== Per-query latency (seeded) ===\n";
+    std::cout << "\n=== Per-query latency (seeded, full database in memory) ===\n";
     query_rec.print_summary();
 
     std::ofstream out(kOutputFilePath);
@@ -297,7 +322,7 @@ int main(int argc, char** argv) {
         print_params(out, params, params_source);
         out << "=== Client setup / registration latency (seeded) ===\n";
         rec.print_summary(out);
-        out << "\n=== Per-query latency (seeded) ===\n";
+        out << "\n=== Per-query latency (seeded, full database in memory) ===\n";
         query_rec.print_summary(out);
         std::cout << "\nResults written to " << kOutputFilePath << "\n";
     } else {

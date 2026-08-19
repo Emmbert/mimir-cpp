@@ -28,6 +28,8 @@
 // Run directly, with the desired thread count set via the environment:
 //   OMP_NUM_THREADS=16 ./benchmark_latency_distributed
 //   OMP_NUM_THREADS=16 ./benchmark_latency_distributed params.json 8
+// TODO embedding sampling should be moved out of the query generation time (because the rejection sampling takes longer
+// TODO than the real embedding generation
 
 #include <omp.h>
 
@@ -90,10 +92,10 @@ void run_one_query(const CryptoContext& ctx, const Params& params, const ClientS
     int64_t r = params.num_component_rings;
     int64_t combined_modulus = (r == 1) ? params.plaintext_modulus : params.combined_component_ring_modulus;
 
-    int64_t machines_per_ring = params.num_servers / r;
-    if (machines_per_ring <= 0) machines_per_ring = 1;
-    int64_t clusters_per_machine = params.num_clusters / machines_per_ring;
-    if (clusters_per_machine <= 0) clusters_per_machine = 1;
+    int64_t machines_per_ring = (params.num_servers + r - 1 ) / r; //ceil(params.num_servers / r);
+    //if (machines_per_ring <= 0) machines_per_ring = 1;
+    int64_t clusters_per_machine = (params.num_clusters + machines_per_ring -1 ) / machines_per_ring; // ceil(params.num_clusters / machines_per_ring);
+    //if (clusters_per_machine <= 0) clusters_per_machine = 1;
 
     // --- client_query_gen: FULL query, all rings, all num_clusters selector
     // bits -- the client doesn't know server topology, and this is a real
@@ -157,42 +159,33 @@ void run_one_query(const CryptoContext& ctx, const Params& params, const ClientS
 
         // --- ONE representative machine's share: clusters_per_machine whole
         // clusters, all splits, for ONE representative ring (ring 0). ----------------
-        int64_t batch_index = params.desired_cluster_index / clusters_per_machine;
+        /*int64_t batch_index = params.desired_cluster_index / clusters_per_machine;
         if (batch_index >= machines_per_ring) {
             batch_index = 0;
         }
-        int64_t batch_start = batch_index * clusters_per_machine;
+        int64_t batch_start = batch_index * clusters_per_machine;*/
 
         rgsw_ct.resize(static_cast<size_t>(clusters_per_machine));
         {
             ScopedTimer t_switch_rgsw(rec, "RGSW ciphertext switching (one machine's share)");
             #pragma omp parallel for schedule(dynamic)
             for (int64_t c = 0; c < clusters_per_machine; ++c) {
-                const auto& gadget_ct = selector_gadget[static_cast<size_t>(batch_start + c)];
+                const auto& gadget_ct = selector_gadget[static_cast<size_t>(c)];
                 RLWEGadgetCT rgsw = pub.lwe_to_rgsw_ksk->lwe_to_rlwe_key_switch(gadget_ct);
                 rgsw_ct[static_cast<size_t>(c)] = std::make_unique<RLWEGadgetCT>(std::move(rgsw));
             }
         }
 
-        std::vector<RLWECT> partial_result; // one machine's share, one ring, per split
+        // Per-machine database shard (ring 0's modulus). UNTIMED preprocessing:
+        // a real server builds its shard once at setup, never per query -- only
+        // scoring against it is the online cost, so it must not sit in the timer.
+        int64_t total_pairs = clusters_per_machine * params.splits_per_cluster;
+        std::vector<std::vector<std::vector<DatabasePolynomialEvalForm>>> db_ring0( // [c_local][s][j]
+            static_cast<size_t>(clusters_per_machine));
+        for (auto& per_cluster : db_ring0) {
+            per_cluster.resize(static_cast<size_t>(params.splits_per_cluster));
+        }
         {
-            ScopedTimer t_scoring(rec, "scoring calculations (one machine's share)");
-
-            partial_result.reserve(static_cast<size_t>(params.splits_per_cluster));
-            for (int64_t s = 0; s < params.splits_per_cluster; ++s) {
-                partial_result.emplace_back(ctx.rlwe_param);
-            }
-
-            // Database: untimed, rebuilt fresh, ONLY ring 0's modulus --
-            // this machine belongs to ring 0's group, it never touches ring
-            // 1's data at all.
-            std::vector<std::vector<std::vector<DatabasePolynomialEvalForm>>> db_ring0( // [c_local][s][j]
-                static_cast<size_t>(clusters_per_machine));
-            for (auto& per_cluster : db_ring0) {
-                per_cluster.resize(static_cast<size_t>(params.splits_per_cluster));
-            }
-
-            int64_t total_pairs = clusters_per_machine * params.splits_per_cluster;
             std::vector<std::mt19937_64> thread_rngs(static_cast<size_t>(omp_get_max_threads()));
             for (auto& tr : thread_rngs) tr.seed(rng());
 
@@ -212,6 +205,16 @@ void run_one_query(const CryptoContext& ctx, const Params& params, const ClientS
                     slot[static_cast<size_t>(j)] = build_database_polynomial_eval_form_from_raw_values(
                         ctx, params, raw, component_ring_modulus(params, 0));
                 }
+            }
+        }
+
+        std::vector<RLWECT> partial_result;
+        {
+            ScopedTimer t_scoring(rec, "scoring calculations (one machine's share)");
+
+            partial_result.reserve(static_cast<size_t>(params.splits_per_cluster));
+            for (int64_t s = 0; s < params.splits_per_cluster; ++s) {
+                partial_result.emplace_back(ctx.rlwe_param);
             }
 
             std::vector<std::vector<std::unique_ptr<RLWECT>>> masked( // [s][c_local]
@@ -318,8 +321,8 @@ int main(int argc, char** argv) {
 
     std::string params_source = (argc >= 2) ? argv[1] : "Params::make_benchmark_params() (built-in defaults)";
     int64_t r = params.num_component_rings;
-    int64_t machines_per_ring = params.num_servers / (r > 0 ? r : 1);
-    int64_t clusters_per_machine = params.num_clusters / (machines_per_ring > 0 ? machines_per_ring : 1);
+    int64_t machines_per_ring = (params.num_servers + r - 1 ) / r;
+    int64_t clusters_per_machine = (params.num_clusters + machines_per_ring - 1) / machines_per_ring; // ceil(params.num_clusters / (machines_per_ring > 0 ? machines_per_ring : 1));
     std::cout << "OpenMP max threads: " << omp_get_max_threads() << "\n";
     std::cout << "num_servers: " << params.num_servers << ", num_component_rings: " << r
               << ", machines_per_ring: " << machines_per_ring << ", clusters_per_machine: " << clusters_per_machine
@@ -350,7 +353,10 @@ int main(int argc, char** argv) {
     query_rec.clear();
 
     std::cout << "Measuring per-query pipeline (" << kQueryMeasuredRuns << " runs)...\n";
-    for (int i = 0; i < kQueryMeasuredRuns; ++i) run_one_query(ctx, params, secret, pub, rng, query_rec);
+    for (int i = 0; i < kQueryMeasuredRuns; ++i){
+        std::cout << "Iteration " << i << " " << std::flush;
+        run_one_query(ctx, params, secret, pub, rng, query_rec);
+    }
 
     std::cout << "\n=== Per-query latency (simulated " << params.num_servers << "-machine deployment, "
               << "compute-only, no network cost) ===\n";

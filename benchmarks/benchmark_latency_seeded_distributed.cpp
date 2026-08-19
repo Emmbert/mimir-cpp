@@ -20,6 +20,7 @@
 #include <memory>
 #include <random>
 #include <vector>
+#include <filesystem>
 
 #include "crt.hpp"
 #include "db_polynomial.hpp"
@@ -41,9 +42,21 @@ constexpr int kSetupWarmupRuns = 2;
 constexpr int kSetupMeasuredRuns = 10;
 
 constexpr int kQueryWarmupRuns = 2;
-constexpr int kQueryMeasuredRuns = 10;
+constexpr int kQueryMeasuredRuns = 100;
 
-const char* kOutputFilePath = "benchmark_latency_seeded_distributed_results.txt";
+std::filesystem::path compute_output_path(const std::string& params_arg) {
+    const std::string base_name = "benchmark_latency_seeded_distributed_results.txt";
+
+    if (params_arg.empty()) {
+        return std::filesystem::path(base_name);
+    }
+
+    std::filesystem::path param_path(params_arg);
+    std::string stem = param_path.stem().string(); // "mimirI.json" -> "mimirI"
+
+    std::filesystem::create_directories(stem); // no-op if it already exists
+    return std::filesystem::path(stem) / base_name;
+}
 
 RLWECT compute_split_score(const CryptoContext& ctx, const std::vector<std::unique_ptr<RLWECTEvalForm>>& query_eval,
                             const std::vector<DatabasePolynomialEvalForm>& db_split) {
@@ -84,20 +97,19 @@ void run_one_query(const CryptoContext& ctx, const Params& params, ClientSecretM
     }
     int64_t r = params.num_component_rings;
 
-    int64_t machines_per_ring = params.num_servers / r;
-    if (machines_per_ring <= 0) machines_per_ring = 1;
-    int64_t clusters_per_machine = params.num_clusters / machines_per_ring;
-    if (clusters_per_machine <= 0) clusters_per_machine = 1;
+    int64_t machines_per_ring = (params.num_servers + r - 1 ) / r; //ceil(params.num_servers / r);
+    //if (machines_per_ring <= 0) machines_per_ring = 1;
+    int64_t clusters_per_machine = (params.num_clusters + machines_per_ring - 1 ) / machines_per_ring; //ceil(params.num_clusters / machines_per_ring);
+    //if (clusters_per_machine <= 0) clusters_per_machine = 1;
 
     SeededQuery query_wire;
+    std::vector<int64_t> embedding_values;
+    embedding_values.reserve(static_cast<size_t>(params.embedding_length));
+    for (int64_t j = 0; j < params.embedding_length; ++j) {
+        embedding_values.push_back(sample_signed_mod_value(params, rng));
+    }
     {
         ScopedTimer t(rec, "client_query_gen (seeded)");
-
-        std::vector<int64_t> embedding_values;
-        embedding_values.reserve(static_cast<size_t>(params.embedding_length));
-        for (int64_t j = 0; j < params.embedding_length; ++j) {
-            embedding_values.push_back(sample_signed_mod_value(params, rng));
-        }
         query_wire = build_seeded_query(ctx, params, secret, embedding_values, params.desired_cluster_index);
     }
 
@@ -131,39 +143,33 @@ void run_one_query(const CryptoContext& ctx, const Params& params, ClientSecretM
             }
         }
 
-        int64_t batch_index = params.desired_cluster_index / clusters_per_machine;
+        /*int64_t batch_index = params.desired_cluster_index / clusters_per_machine;
         if (batch_index >= machines_per_ring) {
             batch_index = 0;
         }
         int64_t batch_start = batch_index * clusters_per_machine;
-
+        */
         rgsw_ct.resize(static_cast<size_t>(clusters_per_machine));
         {
             ScopedTimer t_switch_rgsw(rec, "RGSW ciphertext switching (one machine's share)");
             #pragma omp parallel for schedule(dynamic)
             for (int64_t c = 0; c < clusters_per_machine; ++c) {
-                const auto& gadget_ct = query.selector_cts[static_cast<size_t>(batch_start + c)];
+                const auto& gadget_ct = query.selector_cts[static_cast<size_t>(0 + c)];
                 RLWEGadgetCT rgsw = pub.lwe_to_rgsw_ksk->lwe_to_rlwe_key_switch(gadget_ct);
                 rgsw_ct[static_cast<size_t>(c)] = std::make_unique<RLWEGadgetCT>(std::move(rgsw));
             }
         }
 
-        std::vector<RLWECT> partial_result;
+        // Per-machine database shard (ring 0's modulus). UNTIMED preprocessing:
+        // a real server builds its shard once at setup, never per query -- only
+        // scoring against it is the online cost, so it must not sit in the timer.
+        int64_t total_pairs = clusters_per_machine * params.splits_per_cluster;
+        std::vector<std::vector<std::vector<DatabasePolynomialEvalForm>>> db_ring0( // [c_local][s][j]
+            static_cast<size_t>(clusters_per_machine));
+        for (auto& per_cluster : db_ring0) {
+            per_cluster.resize(static_cast<size_t>(params.splits_per_cluster));
+        }
         {
-            ScopedTimer t_scoring(rec, "scoring calculations (one machine's share)");
-
-            partial_result.reserve(static_cast<size_t>(params.splits_per_cluster));
-            for (int64_t s = 0; s < params.splits_per_cluster; ++s) {
-                partial_result.emplace_back(ctx.rlwe_param);
-            }
-
-            std::vector<std::vector<std::vector<DatabasePolynomialEvalForm>>> db_ring0( // [c_local][s][j]
-                static_cast<size_t>(clusters_per_machine));
-            for (auto& per_cluster : db_ring0) {
-                per_cluster.resize(static_cast<size_t>(params.splits_per_cluster));
-            }
-
-            int64_t total_pairs = clusters_per_machine * params.splits_per_cluster;
             std::vector<std::mt19937_64> thread_rngs(static_cast<size_t>(omp_get_max_threads()));
             for (auto& tr : thread_rngs) tr.seed(rng());
 
@@ -183,6 +189,16 @@ void run_one_query(const CryptoContext& ctx, const Params& params, ClientSecretM
                     slot[static_cast<size_t>(j)] = build_database_polynomial_eval_form_from_raw_values(
                         ctx, params, raw, component_ring_modulus(params, 0));
                 }
+            }
+        }
+
+        std::vector<RLWECT> partial_result;
+        {
+            ScopedTimer t_scoring(rec, "scoring calculations (one machine's share)");
+
+            partial_result.reserve(static_cast<size_t>(params.splits_per_cluster));
+            for (int64_t s = 0; s < params.splits_per_cluster; ++s) {
+                partial_result.emplace_back(ctx.rlwe_param);
             }
 
             std::vector<std::vector<std::unique_ptr<RLWECT>>> masked(
@@ -283,10 +299,13 @@ int main(int argc, char** argv) {
     Params params = load_benchmark_params_from_args(argc, argv, true);
     CryptoContext ctx = CryptoContext::from_params(params);
 
+    const std::string params_arg = (argc >= 2) ? argv[1] : "";
+    const std::filesystem::path kOutputFilePath = compute_output_path(params_arg);
+
     std::string params_source = (argc >= 2) ? argv[1] : "Params::make_benchmark_params() (built-in defaults)";
     int64_t r = params.num_component_rings;
-    int64_t machines_per_ring = params.num_servers / (r > 0 ? r : 1);
-    int64_t clusters_per_machine = params.num_clusters / (machines_per_ring > 0 ? machines_per_ring : 1);
+    int64_t machines_per_ring = (params.num_servers + r - 1) / r; // ceil(params.num_servers / (r > 0 ? r : 1));
+    int64_t clusters_per_machine = (params.num_clusters + machines_per_ring - 1) / machines_per_ring; //ceil(params.num_clusters / (machines_per_ring > 0 ? machines_per_ring : 1));
     std::cout << "OpenMP max threads: " << omp_get_max_threads() << "\n";
     std::cout << "num_servers: " << params.num_servers << ", num_component_rings: " << r
               << ", machines_per_ring: " << machines_per_ring << ", clusters_per_machine: " << clusters_per_machine
@@ -316,7 +335,10 @@ int main(int argc, char** argv) {
     query_rec.clear();
 
     std::cout << "Measuring per-query pipeline (" << kQueryMeasuredRuns << " runs)...\n";
-    for (int i = 0; i < kQueryMeasuredRuns; ++i) run_one_query(ctx, params, secret, pub, rng, query_rec);
+    for (int i = 0; i < kQueryMeasuredRuns; ++i) {
+        std::cout << "Iteration " << i << " " << std::flush;
+        run_one_query(ctx, params, secret, pub, rng, query_rec);
+    }
 
     std::cout << "\n=== Per-query latency (simulated " << params.num_servers << "-machine deployment, seeded, "
               << "compute-only, no network cost) ===\n";

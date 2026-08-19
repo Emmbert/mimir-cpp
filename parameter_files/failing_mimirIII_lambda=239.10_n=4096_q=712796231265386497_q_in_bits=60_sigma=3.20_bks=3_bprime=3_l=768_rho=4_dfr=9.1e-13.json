@@ -1,0 +1,30 @@
+{
+    "B_BASE_DIGIT_KS": 3,
+    "B_BASE_DIGIT_PRIME": 3,
+    "C_NUM_CLUSTERS": 45,
+    "d_DECOMP_VEC_LEN_KS": 38,
+    "d_DECOMP_VEC_LEN_PRIME": 38,
+    "DFR": "9.1e-13",
+    "DFR_limit": "9.1e-13",
+    "EMBEDDING_PRECISION": 4, /* 3 */
+    "l_EMBEDDING_DIM": 768, /* 10 */
+    "LAMBDA": 239.10021859585123,
+    "LAMBDA_min": 128,
+    "n_LATTICE_DIMENSION": 4096,
+    "N_NUM_DOCS": 3213835,
+    "offline_client_comp": "2.5e+06",
+    "offline_server_comp": "1.5e+10",
+    "offline_upload": "14.47 MB",
+    "online_client_comp": "1.1e+07",
+    "online_server_comp": "4.7e+10",
+    "online_upload_size": "18.18 KB",
+    "online_download_size": "1.05 MB",
+    "PLAINTEXT_MODULUS": 98305,
+    "pr_COMP_RING_MODULUS": 98305,
+    "q_CIPHERTEXT_MODULUS": 712796231265386497, /* 3369211424465068033 */
+    "q_log2": "2^59",
+    "r_NUM_COMP_RINGS": 1,
+    "result_type": "precise",
+    "sigma_STANDARD_DEV": 3.2, /* 0 */
+    "std_ranking": "5.1e+11"
+}

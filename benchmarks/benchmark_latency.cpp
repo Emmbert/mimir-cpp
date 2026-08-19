@@ -1,17 +1,21 @@
-// benchmark_latency.cpp
+// benchmark_latency_fulldb.cpp
 //
-// Single-machine, single-threaded latency benchmark. Measures ONE query:
-// client-side encryption, ciphertext switching, scoring, client-side
-// decryption. Database construction (sampling + CRT-splitting + NTT
-// conversion) happens fresh EVERY query -- so the benchmark isn't measured
-// against one fixed database, which matters for representative timing --
-// but its time is NEVER tracked: no ScopedTimer wraps it at all. In the
-// real protocol this is preprocessing, done once at server setup, never
-// repeated per query, so it must not appear in any reported latency number.
+// Single-machine, single-threaded latency benchmark, FULL-DATABASE variant.
+// The entire database (num_clusters x splits x l x r eval-form polynomials)
+// is built ONCE per query and held resident, so scoring streams every
+// distinct DB polynomial exactly as a real query does. Database construction
+// is preprocessing (server setup) and is NEVER timed.
+//
+// This is the more precise variant: if it OOMs for a large parameter set,
+// use benchmark_latency_pool.cpp instead (a small fixed pool bounds memory
+// but makes scoring cache-unrealistically fast).
 //
 // Run directly (NOT via ctest, which would swallow the printed table):
-//   ./benchmark_latency
-//   ./benchmark_latency params.json 1
+//   ./benchmark_latency_fulldb
+//   ./benchmark_latency_fulldb params.json 1
+
+// TODO embedding sampling should be moved out of the query generation time (because the rejection sampling takes longer
+// TODO than the real embedding generation
 
 #include <chrono>
 #include <fstream>
@@ -40,13 +44,9 @@ constexpr int kQueryMeasuredRuns = 10;
 
 const char* kOutputFilePath = "benchmark_latency_results.txt";
 
-using DbEval = std::vector<std::vector<std::vector<std::vector<DatabasePolynomialEvalForm>>>>; // [c][s][j][ring]
-
-RLWECT switch_to_rlwe(const CryptoContext& ctx, const ClientPublicMaterial& pub, const LWECT& lwe_ct) {
-    RLWECT rlwe_ct(ctx.rlwe_param);
-    pub.lwe_to_rlwe_ksk->lwe_to_rlwe_key_switch(rlwe_ct, lwe_ct);
-    return rlwe_ct;
-}
+// Full database, laid out [c][s][ring][j] so db_eval[c][s][ring] is directly
+// the length-l vector compute_split_score wants -- no per-j gather needed.
+using DbEval = std::vector<std::vector<std::vector<std::vector<DatabasePolynomialEvalForm>>>>; // [c][s][ring][j]
 
 RLWECT compute_split_score(const CryptoContext& ctx, const std::vector<RLWECTEvalForm>& query_eval,
                             const std::vector<DatabasePolynomialEvalForm>& db_split) {
@@ -59,22 +59,32 @@ RLWECT compute_split_score(const CryptoContext& ctx, const std::vector<RLWECTEva
     return RLWECT(score_eval);
 }
 
-/// Preprocessing -- deliberately NOT wrapped in any ScopedTimer. Rebuilt
-/// fresh every call so the benchmark measures against varying databases,
-/// not one fixed one, without that variation cost ever being reported.
+/// Preprocessing -- deliberately NOT wrapped in any ScopedTimer. Builds the
+/// FULL database, freeing each polynomial's raw_values (test-only, never read
+/// during scoring) to halve peak memory.
 DbEval build_database(const CryptoContext& ctx, const Params& params, std::mt19937_64& rng) {
+    int64_t r = params.num_component_rings;
     DbEval db_eval(static_cast<size_t>(params.num_clusters));
     for (int64_t c = 0; c < params.num_clusters; ++c) {
         db_eval[static_cast<size_t>(c)].resize(static_cast<size_t>(params.splits_per_cluster));
         for (int64_t s = 0; s < params.splits_per_cluster; ++s) {
-            auto& slot = db_eval[static_cast<size_t>(c)][static_cast<size_t>(s)];
-            slot.resize(static_cast<size_t>(params.embedding_length));
+            auto& entry = db_eval[static_cast<size_t>(c)][static_cast<size_t>(s)]; // [ring][j]
+            entry.resize(static_cast<size_t>(r));
+            for (int64_t ring = 0; ring < r; ++ring) {
+                entry[static_cast<size_t>(ring)].reserve(static_cast<size_t>(params.embedding_length));
+            }
             for (int64_t j = 0; j < params.embedding_length; ++j) {
                 std::vector<int64_t> raw(static_cast<size_t>(params.n));
                 for (int64_t i = 0; i < params.n; ++i) {
                     raw[static_cast<size_t>(i)] = sample_signed_value(params, rng).raw;
                 }
-                slot[static_cast<size_t>(j)] = crt_split_database_polynomial_eval_form(ctx, params, raw);
+                std::vector<DatabasePolynomialEvalForm> split =
+                    crt_split_database_polynomial_eval_form(ctx, params, raw); // one entry per ring
+                for (int64_t ring = 0; ring < r; ++ring) {
+                    split[static_cast<size_t>(ring)].raw_values.clear();
+                    split[static_cast<size_t>(ring)].raw_values.shrink_to_fit();
+                    entry[static_cast<size_t>(ring)].push_back(std::move(split[static_cast<size_t>(ring)]));
+                }
             }
         }
     }
@@ -95,8 +105,7 @@ void run_one_query(const CryptoContext& ctx, const Params& params, const ClientS
     int64_t r = params.num_component_rings;
     int64_t combined_modulus = (r == 1) ? params.plaintext_modulus : params.combined_component_ring_modulus;
 
-    // Untimed preprocessing -- see build_database's comment. Not part of
-    // client_query_gen or server_processing; simply not tracked at all.
+    // Untimed preprocessing.
     DbEval db_eval = build_database(ctx, params, rng);
 
     std::vector<std::vector<LWECT>> embedding_lwe(static_cast<size_t>(r)); // [ring][j]
@@ -141,7 +150,8 @@ void run_one_query(const CryptoContext& ctx, const Params& params, const ClientS
             for (int64_t ring = 0; ring < r; ++ring) {
                 query_eval[static_cast<size_t>(ring)].reserve(static_cast<size_t>(params.embedding_length));
                 for (const auto& lwe_ct : embedding_lwe[static_cast<size_t>(ring)]) {
-                    RLWECT rlwe_ct = switch_to_rlwe(ctx, pub, lwe_ct);
+                    RLWECT rlwe_ct(ctx.rlwe_param);
+                    pub.lwe_to_rlwe_ksk->lwe_to_rlwe_key_switch(rlwe_ct, lwe_ct);
                     query_eval[static_cast<size_t>(ring)].emplace_back(rlwe_ct);
                 }
             }
@@ -172,12 +182,9 @@ void run_one_query(const CryptoContext& ctx, const Params& params, const ClientS
             for (int64_t c = 0; c < params.num_clusters; ++c) {
                 for (int64_t s = 0; s < params.splits_per_cluster; ++s) {
                     for (int64_t ring = 0; ring < r; ++ring) {
-                        const auto& slot = db_eval[static_cast<size_t>(c)][static_cast<size_t>(s)];
-                        std::vector<DatabasePolynomialEvalForm> db_for_ring;
-                        db_for_ring.reserve(static_cast<size_t>(params.embedding_length));
-                        for (int64_t j = 0; j < params.embedding_length; ++j) {
-                            db_for_ring.push_back(slot[static_cast<size_t>(j)][static_cast<size_t>(ring)]);
-                        }
+                        // Direct const ref into the full DB -- raw_values were freed at build time.
+                        const std::vector<DatabasePolynomialEvalForm>& db_for_ring =
+                            db_eval[static_cast<size_t>(c)][static_cast<size_t>(s)][static_cast<size_t>(ring)];
 
                         auto ts0 = Clock::now();
                         RLWECT score = compute_split_score(ctx, query_eval[static_cast<size_t>(ring)], db_for_ring);
@@ -264,10 +271,11 @@ int main(int argc, char** argv) {
 
     std::cout << "Measuring per-query pipeline (" << kQueryMeasuredRuns << " runs)...\n";
     for (int i = 0; i < kQueryMeasuredRuns; ++i) {
+        std::cout << "Iteration " << i << " " << std::flush;
         run_one_query(ctx, params, secret, pub, rng, query_rec);
     }
 
-    std::cout << "\n=== Per-query latency ===\n";
+    std::cout << "\n=== Per-query latency (full database in memory) ===\n";
     query_rec.print_summary();
 
     std::ofstream out(kOutputFilePath);
@@ -275,7 +283,7 @@ int main(int argc, char** argv) {
         print_params(out, params, params_source);
         out << "=== Client setup / registration latency ===\n";
         rec.print_summary(out);
-        out << "\n=== Per-query latency ===\n";
+        out << "\n=== Per-query latency (full database in memory) ===\n";
         query_rec.print_summary(out);
         std::cout << "\nResults written to " << kOutputFilePath << "\n";
     } else {

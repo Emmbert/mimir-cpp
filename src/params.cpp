@@ -2,6 +2,8 @@
 
 #include <cmath>
 #include <stdexcept>
+#include <cstdint>
+#include <cassert>
 #include <cstdlib>       // std::getenv
 #include "crt.hpp"        // crt_combined_modulus
 #include "params_io.hpp" // load_params_from_json
@@ -13,6 +15,10 @@ void Params::derive_dependent_parameters() {
         throw std::invalid_argument("num_clusters, num_servers and n must be set and > 0 "
                                      "before calling derive_dependent_parameters()");
     }
+    if (q >= (uint64_t(1) << 62)) {
+        throw std::invalid_argument("ciphertext modulus is too large for NTT. It has to use < 63 bits");
+    }
+
     auto is_power_of_two = [](int64_t x) { return x > 0 && (x & (x - 1)) == 0; };
     /*if (!is_power_of_two(decomposition_base_ksk)) {
         throw std::invalid_argument("decomposition_base_ksk (" + std::to_string(decomposition_base_ksk) +
@@ -25,9 +31,9 @@ void Params::derive_dependent_parameters() {
                                      "silently produces wrong results otherwise.");
     }*/
 
-    cluster_size = database_size / num_clusters; // int division, as specified
+    cluster_size = (database_size + num_clusters - 1) / num_clusters; // ceil(database_size / num_clusters)
     splits_per_cluster = (cluster_size + n - 1) / n; // ceil(cluster_size / n)
-    clusters_per_server = num_clusters / num_servers; // int division, as specified
+    clusters_per_server = (num_clusters + num_servers - 1) / num_servers; // ceil()
 
     // ---- CRT validation ---------------------------------------------------
     if (num_component_rings != 1 && num_component_rings != 2) {

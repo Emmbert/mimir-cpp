@@ -1,18 +1,19 @@
-// benchmark_latency_parallel_fulldb.cpp
+// benchmark_latency_parallel_pool.cpp
 //
-// Same measurements as benchmark_latency_fulldb.cpp, but RLWE switching, RGSW
-// switching, database construction, and per-(cluster,split) scoring are
-// parallelized with OpenMP. FULL-DATABASE variant: the entire database is
-// built ONCE per query and held resident (untimed), so scoring streams every
-// distinct DB polynomial as a real query does.
+// Same measurements as benchmark_latency_parallel_fulldb.cpp, but with a small
+// fixed database POOL instead of the full database. Every scoring iteration
+// still performs a full, real RLWE multiplication / RGSW masking / accumulation
+// for every (cluster,split,ring) -- nothing is skipped -- it just reuses one of
+// kDatabasePoolSize pool entries as its multiplicand. This bounds peak memory
+// for parameter sets whose full database (plus per-thread transients) won't fit.
 //
-// WARNING: for large parameter sets the full database plus per-thread transient
-// working sets can exceed RAM and get OOM-killed. If that happens, use
-// benchmark_latency_parallel_pool.cpp instead.
+// CAVEAT for reporting: the reused pool stays cache-hot, so "scoring
+// calculations" here UNDER-reports the realistic (full-DB) scoring latency.
+// Prefer benchmark_latency_parallel_fulldb.cpp; use this only when that OOMs.
 //
 // Run directly, with the desired thread count set via the environment:
-//   OMP_NUM_THREADS=16 ./benchmark_latency_parallel_fulldb
-//   OMP_NUM_THREADS=32 ./benchmark_latency_parallel_fulldb params.json 1
+//   OMP_NUM_THREADS=16 ./benchmark_latency_parallel_pool
+//   OMP_NUM_THREADS=32 ./benchmark_latency_parallel_pool params.json 1
 // TODO embedding sampling should be moved out of the query generation time (because the rejection sampling takes longer
 // TODO than the real embedding generation
 
@@ -44,11 +45,12 @@ constexpr int kSetupMeasuredRuns = 10;
 constexpr int kQueryWarmupRuns = 2;
 constexpr int kQueryMeasuredRuns = 10;
 
-const char* kOutputFilePath = "benchmark_latency_parallel_results.txt";
+const char* kOutputFilePath = "benchmark_latency_parallel_pool_results.txt";
 
-// Full database, laid out [c][s][ring][j] so db_eval[c][s][ring] is directly
-// the length-l vector compute_split_score wants -- no per-j gather needed.
-using DbEval = std::vector<std::vector<std::vector<std::vector<DatabasePolynomialEvalForm>>>>; // [c][s][ring][j]
+// Small fixed pool, laid out [pool_idx][ring][j] so db_pool[idx][ring] is
+// directly the length-l vector compute_split_score wants -- no per-j gather.
+constexpr int64_t kDatabasePoolSize = 32;
+using DbPool = std::vector<std::vector<std::vector<DatabasePolynomialEvalForm>>>; // [pool_idx][ring][j]
 
 RLWECT switch_to_rlwe(const CryptoContext& ctx, const ClientPublicMaterial& pub, const LWECT& lwe_ct) {
     RLWECT rlwe_ct(ctx.rlwe_param);
@@ -67,27 +69,21 @@ RLWECT compute_split_score(const CryptoContext& ctx, const std::vector<std::uniq
     return RLWECT(score_eval);
 }
 
-/// Preprocessing -- deliberately NOT wrapped in any ScopedTimer. Builds the
-/// FULL database in parallel, freeing each polynomial's raw_values (test-only,
-/// never read during scoring) to halve peak memory.
-DbEval build_database(const CryptoContext& ctx, const Params& params, std::mt19937_64& rng) {
+/// Preprocessing -- deliberately NOT wrapped in any ScopedTimer. Builds
+/// kDatabasePoolSize distinct entries in parallel, freeing each polynomial's
+/// raw_values (test-only, never read during scoring).
+DbPool build_database_pool(const CryptoContext& ctx, const Params& params, std::mt19937_64& rng) {
     int64_t r = params.num_component_rings;
-    DbEval db_eval(static_cast<size_t>(params.num_clusters));
-    for (int64_t c = 0; c < params.num_clusters; ++c) {
-        db_eval[static_cast<size_t>(c)].resize(static_cast<size_t>(params.splits_per_cluster)); // pre-size serially
-    }
+    DbPool pool(static_cast<size_t>(kDatabasePoolSize));
 
-    int64_t total_pairs = params.num_clusters * params.splits_per_cluster;
     std::vector<std::mt19937_64> thread_rngs(static_cast<size_t>(omp_get_max_threads()));
     for (auto& tr : thread_rngs) tr.seed(rng());
 
     #pragma omp parallel for schedule(dynamic)
-    for (int64_t idx = 0; idx < total_pairs; ++idx) {
-        int64_t c = idx / params.splits_per_cluster;
-        int64_t s = idx % params.splits_per_cluster;
+    for (int64_t p = 0; p < kDatabasePoolSize; ++p) {
         std::mt19937_64& local_rng = thread_rngs[static_cast<size_t>(omp_get_thread_num())];
 
-        auto& entry = db_eval[static_cast<size_t>(c)][static_cast<size_t>(s)]; // [ring][j]
+        auto& entry = pool[static_cast<size_t>(p)]; // [ring][j]
         entry.resize(static_cast<size_t>(r));
         for (int64_t ring = 0; ring < r; ++ring) {
             entry[static_cast<size_t>(ring)].reserve(static_cast<size_t>(params.embedding_length));
@@ -106,7 +102,7 @@ DbEval build_database(const CryptoContext& ctx, const Params& params, std::mt199
             }
         }
     }
-    return db_eval;
+    return pool;
 }
 
 void run_setup_and_registration(const CryptoContext& ctx, const Params& params, LatencyRecorder& rec) {
@@ -128,7 +124,7 @@ void run_one_query(const CryptoContext& ctx, const Params& params, const ClientS
     int64_t total_pairs = params.num_clusters * params.splits_per_cluster;
 
     // Untimed preprocessing.
-    DbEval db_eval = build_database(ctx, params, rng);
+    DbPool db_pool = build_database_pool(ctx, params, rng);
 
     std::vector<std::vector<LWECT>> embedding_lwe(static_cast<size_t>(r));
     std::vector<LWEGadgetCT> selector_gadget;
@@ -214,9 +210,9 @@ void run_one_query(const CryptoContext& ctx, const Params& params, const ClientS
                     int64_t c = idx / params.splits_per_cluster;
                     int64_t s = idx % params.splits_per_cluster;
 
-                    // Direct const ref into the full DB -- raw_values were freed at build time.
+                    // Direct const ref into the pool -- raw_values were freed at build time.
                     const std::vector<DatabasePolynomialEvalForm>& db_split =
-                        db_eval[static_cast<size_t>(c)][static_cast<size_t>(s)][static_cast<size_t>(ring)];
+                        db_pool[static_cast<size_t>(idx % kDatabasePoolSize)][static_cast<size_t>(ring)];
 
                     RLWECT score = compute_split_score(ctx, query_eval[static_cast<size_t>(ring)], db_split);
 
@@ -301,12 +297,13 @@ int main(int argc, char** argv) {
     query_rec.clear();
 
     std::cout << "Measuring per-query pipeline (" << kQueryMeasuredRuns << " runs)...\n";
-    for (int i = 0; i < kQueryMeasuredRuns; ++i){
+    for (int i = 0; i < kQueryMeasuredRuns; ++i)
+    {
         std::cout << "Iteration " << i << " " << std::flush;
         run_one_query(ctx, params, secret, pub, rng, query_rec);
     }
 
-    std::cout << "\n=== Per-query latency (full database in memory) ===\n";
+    std::cout << "\n=== Per-query latency (database pool) ===\n";
     query_rec.print_summary();
 
     std::ofstream out(kOutputFilePath);
@@ -315,7 +312,7 @@ int main(int argc, char** argv) {
         print_params(out, params, params_source);
         out << "=== Client setup / registration latency ===\n";
         rec.print_summary(out);
-        out << "\n=== Per-query latency (full database in memory) ===\n";
+        out << "\n=== Per-query latency (database pool) ===\n";
         query_rec.print_summary(out);
         std::cout << "\nResults written to " << kOutputFilePath << "\n";
     } else {

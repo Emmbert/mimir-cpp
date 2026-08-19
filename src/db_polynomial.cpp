@@ -74,6 +74,8 @@ std::vector<int64_t> decode_to_signed(const FHEDeck::Vector& values, const Param
 SignedValue sample_signed_value(const Params& params, std::mt19937_64& rng) {
     std::uniform_int_distribution<int64_t> dist(min_embedding_value(params), max_embedding_value(params));
     int64_t raw = dist(rng);
+    //int64_t raw = -1; // for debugging
+    //std::cout << "[log] sampling raw message " << raw << ")...\n" << std::flush;
     return SignedValue{raw, reduce_mod(raw, params.plaintext_modulus)};
 }
 
