@@ -37,10 +37,15 @@ namespace psearch {
 /// rather this fail loudly on a non-power-of-two base instead of
 /// approximating, see the TODO in params_io.cpp -- it's a one-line change.
 ///
-/// r_NUM_COMP_RINGS is validated to be 1: this codebase doesn't implement
-/// CRT decomposition (multiple computation rings) yet, so a file requiring
-/// r_NUM_COMP_RINGS > 1 can't be faithfully represented and causes this
-/// function to throw.
+/// r_NUM_COMP_RINGS is validated to be 1 or 2: this codebase supports no CRT
+/// (1) or two-component-ring CRT decomposition (2) -- see
+/// Params::num_component_rings/comp_ring_modulus and crt.hpp. Any other
+/// value causes this function to throw. When r_NUM_COMP_RINGS == 2,
+/// pr_COMP_RING_MODULUS is also read (mapped to Params::comp_ring_modulus;
+/// the second component modulus is always comp_ring_modulus - 1, never read
+/// from the file). PLAINTEXT_MODULUS keeps its existing meaning unchanged in
+/// both cases -- the required lower bound on the message space size --
+/// validated against the combined CRT modulus in derive_dependent_parameters().
 ///
 /// Every other field (DFR, LAMBDA, offline/online cost estimates, upload/
 /// download sizes, ...) is the external tool's OWN analytical prediction,
@@ -67,7 +72,8 @@ Params load_params_from_json(const std::string& path, int64_t num_servers, int64
 /// realistic (large) parameter file into every correctness test would turn
 /// a several-second `ctest` run into minutes/hours. This function exists
 /// specifically for benchmark entry points, not general Params construction.
-Params load_benchmark_params_from_args(int argc, char** argv);
+Params load_benchmark_params_from_args(int argc, char** argv, bool distributed,
+                                            std::string* out_source_description = nullptr);
 
 /// Prints every field of `params` to `os`, plus `source_description` (a
 /// file path if one was loaded, or a note that built-in defaults were

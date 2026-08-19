@@ -86,7 +86,7 @@ TEST(ProcessQueryCorrectness, MatchesPlaintextDotProductForRealData) {
         query_values.push_back(v);
         embedding_values.push_back(v.reduced);
     }
-    SeededQuery query_wire = build_seeded_query(ctx, secret, embedding_values, params.num_clusters,
+    SeededQuery query_wire = build_seeded_query(ctx, params, secret, embedding_values,
                                                  params.desired_cluster_index);
 
     // --- Call process_query DIRECTLY -- exactly what server.cpp does. ---------

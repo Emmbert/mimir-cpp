@@ -78,7 +78,8 @@ MIMIR_TEST_DATABASE_FILE=../cpp_database_files/db_MSMarco_5100_l10_rho2_c2.mdb .
 
 To run just a subgroup of all tests:
 ```bash
-ctest -L crypto          # only the crypto/protocol correctness tests
+ctest -L crypto          # only the crypto correctness tests
+ctest -L benchmarking    # only the protocol correctness tests
 ctest -L server_client   # only the server/database/client tests
 ctest -LE crypto         # everything except crypto (same set as above here, but useful in general)
 ctest -L crypto -L database    # NOTE: this is AND-of-neither-quite -- see caveat below

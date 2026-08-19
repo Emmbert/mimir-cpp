@@ -1,8 +1,13 @@
 // benchmark_latency.cpp
 //
-// Single-machine, single-threaded latency benchmark. Results are printed to
-// stdout AND written to a file (see kOutputFilePath), along with the exact
-// parameters used and (if one was given) the parameter file's name.
+// Single-machine, single-threaded latency benchmark. Measures ONE query:
+// client-side encryption, ciphertext switching, scoring, client-side
+// decryption. Database construction (sampling + CRT-splitting + NTT
+// conversion) happens fresh EVERY query -- so the benchmark isn't measured
+// against one fixed database, which matters for representative timing --
+// but its time is NEVER tracked: no ScopedTimer wraps it at all. In the
+// real protocol this is preprocessing, done once at server setup, never
+// repeated per query, so it must not appear in any reported latency number.
 //
 // Run directly (NOT via ctest, which would swallow the printed table):
 //   ./benchmark_latency
@@ -14,6 +19,7 @@
 #include <random>
 #include <vector>
 
+#include "crt.hpp"
 #include "db_polynomial.hpp"
 #include "fhe_deck.h"
 #include "key_material.hpp"
@@ -34,6 +40,8 @@ constexpr int kQueryMeasuredRuns = 10;
 
 const char* kOutputFilePath = "benchmark_latency_results.txt";
 
+using DbEval = std::vector<std::vector<std::vector<std::vector<DatabasePolynomialEvalForm>>>>; // [c][s][j][ring]
+
 RLWECT switch_to_rlwe(const CryptoContext& ctx, const ClientPublicMaterial& pub, const LWECT& lwe_ct) {
     RLWECT rlwe_ct(ctx.rlwe_param);
     pub.lwe_to_rlwe_ksk->lwe_to_rlwe_key_switch(rlwe_ct, lwe_ct);
@@ -51,6 +59,28 @@ RLWECT compute_split_score(const CryptoContext& ctx, const std::vector<RLWECTEva
     return RLWECT(score_eval);
 }
 
+/// Preprocessing -- deliberately NOT wrapped in any ScopedTimer. Rebuilt
+/// fresh every call so the benchmark measures against varying databases,
+/// not one fixed one, without that variation cost ever being reported.
+DbEval build_database(const CryptoContext& ctx, const Params& params, std::mt19937_64& rng) {
+    DbEval db_eval(static_cast<size_t>(params.num_clusters));
+    for (int64_t c = 0; c < params.num_clusters; ++c) {
+        db_eval[static_cast<size_t>(c)].resize(static_cast<size_t>(params.splits_per_cluster));
+        for (int64_t s = 0; s < params.splits_per_cluster; ++s) {
+            auto& slot = db_eval[static_cast<size_t>(c)][static_cast<size_t>(s)];
+            slot.resize(static_cast<size_t>(params.embedding_length));
+            for (int64_t j = 0; j < params.embedding_length; ++j) {
+                std::vector<int64_t> raw(static_cast<size_t>(params.n));
+                for (int64_t i = 0; i < params.n; ++i) {
+                    raw[static_cast<size_t>(i)] = sample_signed_value(params, rng).raw;
+                }
+                slot[static_cast<size_t>(j)] = crt_split_database_polynomial_eval_form(ctx, params, raw);
+            }
+        }
+    }
+    return db_eval;
+}
+
 void run_setup_and_registration(const CryptoContext& ctx, const Params& params, LatencyRecorder& rec) {
     ClientSecretMaterial secret;
     {
@@ -62,15 +92,35 @@ void run_setup_and_registration(const CryptoContext& ctx, const Params& params, 
 
 void run_one_query(const CryptoContext& ctx, const Params& params, const ClientSecretMaterial& secret,
                     const ClientPublicMaterial& pub, std::mt19937_64& rng, LatencyRecorder& rec) {
-    std::vector<LWECT> embedding_lwe;
+    int64_t r = params.num_component_rings;
+    int64_t combined_modulus = (r == 1) ? params.plaintext_modulus : params.combined_component_ring_modulus;
+
+    // Untimed preprocessing -- see build_database's comment. Not part of
+    // client_query_gen or server_processing; simply not tracked at all.
+    DbEval db_eval = build_database(ctx, params, rng);
+
+    std::vector<std::vector<LWECT>> embedding_lwe(static_cast<size_t>(r)); // [ring][j]
     std::vector<LWEGadgetCT> selector_gadget;
     {
         ScopedTimer t(rec, "client_query_gen");
 
-        embedding_lwe.reserve(static_cast<size_t>(params.embedding_length));
+        for (int64_t ring = 0; ring < r; ++ring) {
+            embedding_lwe[static_cast<size_t>(ring)].reserve(static_cast<size_t>(params.embedding_length));
+        }
         for (int64_t j = 0; j < params.embedding_length; ++j) {
-            int64_t m = sample_signed_mod_value(params, rng);
-            embedding_lwe.push_back(secret.lwe_sk->encode_and_encrypt(m, ctx.encoding));
+            SignedValue m = sample_signed_value(params, rng);
+            std::vector<int64_t> components;
+            if (r == 1) {
+                components = {m.reduced};
+            } else {
+                int64_t canonical = reduce_mod(m.raw, combined_modulus);
+                auto [c1, c2] = crt_split(canonical, params.comp_ring_modulus);
+                components = {c1, c2};
+            }
+            for (int64_t ring = 0; ring < r; ++ring) {
+                embedding_lwe[static_cast<size_t>(ring)].push_back(secret.lwe_sk->encode_and_encrypt(
+                    components[static_cast<size_t>(ring)], ctx.component_encodings[static_cast<size_t>(ring)]));
+            }
         }
 
         selector_gadget.reserve(static_cast<size_t>(params.num_clusters));
@@ -80,18 +130,20 @@ void run_one_query(const CryptoContext& ctx, const Params& params, const ClientS
         }
     }
 
-    std::vector<RLWECT> final_result;
-    std::vector<RLWECTEvalForm> query_eval;
+    std::vector<std::vector<RLWECT>> final_result(static_cast<size_t>(r)); // [ring][s]
+    std::vector<std::vector<RLWECTEvalForm>> query_eval(static_cast<size_t>(r));
     std::vector<RLWEGadgetCT> rgsw_ct;
     {
         ScopedTimer t(rec, "server_processing");
 
         {
             ScopedTimer t_switch_rlwe(rec, "RLWE ciphertext switching");
-            query_eval.reserve(embedding_lwe.size());
-            for (const auto& lwe_ct : embedding_lwe) {
-                RLWECT rlwe_ct = switch_to_rlwe(ctx, pub, lwe_ct);
-                query_eval.emplace_back(rlwe_ct);
+            for (int64_t ring = 0; ring < r; ++ring) {
+                query_eval[static_cast<size_t>(ring)].reserve(static_cast<size_t>(params.embedding_length));
+                for (const auto& lwe_ct : embedding_lwe[static_cast<size_t>(ring)]) {
+                    RLWECT rlwe_ct = switch_to_rlwe(ctx, pub, lwe_ct);
+                    query_eval[static_cast<size_t>(ring)].emplace_back(rlwe_ct);
+                }
             }
         }
         {
@@ -105,45 +157,47 @@ void run_one_query(const CryptoContext& ctx, const Params& params, const ClientS
         {
             ScopedTimer t_scoring(rec, "scoring calculations");
 
-            final_result.reserve(static_cast<size_t>(params.splits_per_cluster));
-            for (int64_t s = 0; s < params.splits_per_cluster; ++s) {
-                final_result.emplace_back(ctx.rlwe_param);
+            for (int64_t ring = 0; ring < r; ++ring) {
+                final_result[static_cast<size_t>(ring)].reserve(static_cast<size_t>(params.splits_per_cluster));
+                for (int64_t s = 0; s < params.splits_per_cluster; ++s) {
+                    final_result[static_cast<size_t>(ring)].emplace_back(ctx.rlwe_param);
+                }
             }
 
             using Clock = std::chrono::steady_clock;
-            std::chrono::duration<double, std::milli> db_build_time{0};
             std::chrono::duration<double, std::milli> score_time{0};
             std::chrono::duration<double, std::milli> mask_time{0};
             std::chrono::duration<double, std::milli> sum_time{0};
 
             for (int64_t c = 0; c < params.num_clusters; ++c) {
                 for (int64_t s = 0; s < params.splits_per_cluster; ++s) {
-                    auto t0 = Clock::now();
-                    std::vector<DatabasePolynomialEvalForm> db_split;
-                    db_split.reserve(static_cast<size_t>(params.embedding_length));
-                    for (int64_t j = 0; j < params.embedding_length; ++j) {
-                        db_split.push_back(build_random_database_polynomial_eval_form(ctx, params, rng));
+                    for (int64_t ring = 0; ring < r; ++ring) {
+                        const auto& slot = db_eval[static_cast<size_t>(c)][static_cast<size_t>(s)];
+                        std::vector<DatabasePolynomialEvalForm> db_for_ring;
+                        db_for_ring.reserve(static_cast<size_t>(params.embedding_length));
+                        for (int64_t j = 0; j < params.embedding_length; ++j) {
+                            db_for_ring.push_back(slot[static_cast<size_t>(j)][static_cast<size_t>(ring)]);
+                        }
+
+                        auto ts0 = Clock::now();
+                        RLWECT score = compute_split_score(ctx, query_eval[static_cast<size_t>(ring)], db_for_ring);
+                        auto ts1 = Clock::now();
+
+                        RLWECT masked(ctx.rlwe_param);
+                        rgsw_ct[static_cast<size_t>(c)].mul(masked, score);
+                        auto ts2 = Clock::now();
+
+                        final_result[static_cast<size_t>(ring)][static_cast<size_t>(s)].add(
+                            final_result[static_cast<size_t>(ring)][static_cast<size_t>(s)], masked);
+                        auto ts3 = Clock::now();
+
+                        score_time += (ts1 - ts0);
+                        mask_time += (ts2 - ts1);
+                        sum_time += (ts3 - ts2);
                     }
-                    auto t1 = Clock::now();
-
-                    RLWECT score = compute_split_score(ctx, query_eval, db_split);
-                    auto t2 = Clock::now();
-
-                    RLWECT masked(ctx.rlwe_param);
-                    rgsw_ct[static_cast<size_t>(c)].mul(masked, score);
-                    auto t3 = Clock::now();
-
-                    final_result[static_cast<size_t>(s)].add(final_result[static_cast<size_t>(s)], masked);
-                    auto t4 = Clock::now();
-
-                    db_build_time += (t1 - t0);
-                    score_time += (t2 - t1);
-                    mask_time += (t3 - t2);
-                    sum_time += (t4 - t3);
                 }
             }
 
-            rec.add_sample("  -> db polynomial building", db_build_time.count());
             rec.add_sample("  -> score computation", score_time.count());
             rec.add_sample("  -> RGSW masking", mask_time.count());
             rec.add_sample("  -> cross-cluster summation", sum_time.count());
@@ -152,8 +206,20 @@ void run_one_query(const CryptoContext& ctx, const Params& params, const ClientS
 
     {
         ScopedTimer t(rec, "client_decrypt");
-        for (const auto& ct : final_result) {
-            [[maybe_unused]] Vector decrypted = secret.rlwe_sk->decrypt_vector(ct, ctx.encoding);
+        for (int64_t s = 0; s < params.splits_per_cluster; ++s) {
+            std::vector<Vector> decrypted_per_ring;
+            decrypted_per_ring.reserve(static_cast<size_t>(r));
+            for (int64_t ring = 0; ring < r; ++ring) {
+                decrypted_per_ring.push_back(secret.rlwe_sk->decrypt_vector(
+                    final_result[static_cast<size_t>(ring)][static_cast<size_t>(s)],
+                    ctx.component_encodings[static_cast<size_t>(ring)]));
+            }
+            if (r == 2) {
+                for (int64_t i = 0; i < params.n; ++i) {
+                    [[maybe_unused]] int64_t recomposed =
+                        crt_recompose(decrypted_per_ring[0][i], decrypted_per_ring[1][i], params.comp_ring_modulus);
+                }
+            }
         }
     }
 }
@@ -161,7 +227,7 @@ void run_one_query(const CryptoContext& ctx, const Params& params, const ClientS
 } // namespace
 
 int main(int argc, char** argv) {
-    Params params = load_benchmark_params_from_args(argc, argv);
+    Params params = load_benchmark_params_from_args(argc, argv, false);
     CryptoContext ctx = CryptoContext::from_params(params);
 
     std::string params_source = (argc >= 2) ? argv[1] : "Params::make_benchmark_params() (built-in defaults)";

@@ -26,7 +26,7 @@ RegistrationBundle build_registration(const CryptoContext& ctx, const Params& pa
 std::vector<uint8_t> build_query_message(const CryptoContext& ctx, ClientSession& session, const Params& params,
                                           const std::vector<int64_t>& embedding_values,
                                           int64_t desired_cluster_index) {
-    SeededQuery query_wire = build_seeded_query(ctx, session.secret, embedding_values, params.num_clusters,
+    SeededQuery query_wire = build_seeded_query(ctx, params, session.secret, embedding_values,
                                                  desired_cluster_index);
 
     QueryMessage msg{session.session_id, query_wire};

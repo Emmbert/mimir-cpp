@@ -3,6 +3,7 @@
 #include <cmath>
 #include <stdexcept>
 #include <cstdlib>       // std::getenv
+#include "crt.hpp"        // crt_combined_modulus
 #include "params_io.hpp" // load_params_from_json
 
 namespace psearch {
@@ -27,6 +28,31 @@ void Params::derive_dependent_parameters() {
     cluster_size = database_size / num_clusters; // int division, as specified
     splits_per_cluster = (cluster_size + n - 1) / n; // ceil(cluster_size / n)
     clusters_per_server = num_clusters / num_servers; // int division, as specified
+
+    // ---- CRT validation ---------------------------------------------------
+    if (num_component_rings != 1 && num_component_rings != 2) {
+        throw std::invalid_argument("num_component_rings must be 1 (no CRT) or 2 (two-component-ring CRT), got " +
+                                     std::to_string(num_component_rings));
+    }
+    if (num_component_rings == 2) {
+        if (comp_ring_modulus < 2) {
+            throw std::invalid_argument("comp_ring_modulus must be set (>= 2) when num_component_rings == 2, got " +
+                                         std::to_string(comp_ring_modulus));
+        }
+        combined_component_ring_modulus = crt_combined_modulus(comp_ring_modulus);
+        if (combined_component_ring_modulus < plaintext_modulus) {
+            throw std::invalid_argument(
+                "comp_ring_modulus (" + std::to_string(comp_ring_modulus) + ") gives a combined CRT modulus of " +
+                std::to_string(combined_component_ring_modulus) +
+                " (= comp_ring_modulus*(comp_ring_modulus-1)), which is smaller than "
+                "plaintext_modulus (" + std::to_string(plaintext_modulus) +
+                "). plaintext_modulus is the required lower bound on the message space size -- CRT is just an "
+                "implementation detail of how that space is represented, so the combined modulus must still meet "
+                "it, exactly as the single-ring case would need plaintext_modulus itself to be at least this large.");
+        }
+    } else {
+        combined_component_ring_modulus = 0; // not meaningful outside CRT
+    }
 }
 
     Params Params::make_test_params() {
@@ -70,6 +96,44 @@ void Params::derive_dependent_parameters() {
     p.num_clusters = 24; //4;
     p.num_servers = 10;
     p.desired_cluster_index = 2;
+
+    p.derive_dependent_parameters();
+    return p;
+}
+
+    Params Params::make_test_params_component_rings() {
+    // Same MIMIR_TEST_PARAMS_FILE opt-in as make_test_params() -- "as
+    // usual". A file with r_NUM_COMP_RINGS == 1 loads fine here (it's
+    // valid Params), but CRT-specific tests should skip rather than run
+    // against it -- see test_crt.cpp for the skip pattern.
+    if (const char* env_path = std::getenv("MIMIR_TEST_PARAMS_FILE")) {
+        std::string path(env_path);
+        if (!path.empty()) {
+            std::cout << "MIMIR_TEST_PARAMS_FILE set -- loading test params from " << path << "\n";
+            return load_params_from_json(path, /*num_servers=*/1, /*desired_cluster_index=*/0);
+        }
+    }
+
+    // Mirrors make_test_params()'s n/q/sigma/decomposition bases/
+    // database_size/embedding fields exactly, so a non-CRT and CRT test
+    // can be directly compared on otherwise-identical parameters.
+    Params p;
+    p.n = 2048;
+    p.q = 281474976694273;
+    p.sigma = 3.2;
+    p.plaintext_modulus = 71; // same lower bound as make_test_params() -- unchanged meaning
+    p.decomposition_base_ksk = 4;
+    p.decomposition_base_prime = 8;
+
+    p.database_size = 321383;
+    p.embedding_length = 4;
+    p.embedding_precision = 2;
+    p.num_clusters = 24;
+    p.num_servers = 10;
+    p.desired_cluster_index = 2;
+
+    p.num_component_rings = 2;
+    p.comp_ring_modulus = 11; // p1=11, p2=10, combined=110 -- comfortably >= plaintext_modulus (71)
 
     p.derive_dependent_parameters();
     return p;
@@ -144,6 +208,17 @@ void Params::derive_dependent_parameters() {
         params.n, params.q, params.decomposition_base_prime);
     ctx.encoding = FHEDeck::PlaintextEncoding(
         FHEDeck::PlaintextEncodingType::full_domain, params.plaintext_modulus, params.q);
+
+    if (params.num_component_rings == 1) {
+        ctx.component_encodings = {ctx.encoding};
+    } else { // == 2, validated by Params::derive_dependent_parameters()
+        int64_t p1 = params.comp_ring_modulus;
+        int64_t p2 = params.comp_ring_modulus - 1;
+        ctx.component_encodings = {
+            FHEDeck::PlaintextEncoding(FHEDeck::PlaintextEncodingType::full_domain, p1, params.q),
+            FHEDeck::PlaintextEncoding(FHEDeck::PlaintextEncodingType::full_domain, p2, params.q),
+        };
+    }
     return ctx;
 }
 

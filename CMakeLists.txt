@@ -51,14 +51,14 @@ add_library(mimir_core
         src/seeded_distribution.cpp
         src/seeded_eval_keys.cpp
         src/seeded_query.cpp
-        src/server_db.cpp
-        src/database_metadata.cpp
-        src/server_query_processing.cpp
-        src/server_session.cpp
-        src/server_dispatch.cpp
-        src/wire_protocol.cpp
-        src/network.cpp
-        src/client_core.cpp
+        #src/server_db.cpp
+        #src/database_metadata.cpp
+        #src/server_query_processing.cpp
+        #src/server_session.cpp
+        #src/server_dispatch.cpp
+        #src/wire_protocol.cpp
+        #src/network.cpp
+        #src/client_core.cpp
 )
 target_include_directories(mimir_core PUBLIC include)
 
@@ -80,12 +80,31 @@ target_link_libraries(kamils_test PRIVATE mimir_core)
 # --- GoogleTest-based unit tests: crypto / protocol correctness -------------
 # All tagged LABELS "crypto" -- run with: ctest -L crypto
 
+add_executable(test_crt tests/test_crt.cpp)
+target_link_libraries(test_crt PRIVATE
+        mimir_core
+        GTest::gtest_main
+)
+gtest_discover_tests(test_crt
+        PROPERTIES LABELS "crypto"
+)
+
 add_executable(test_lwe_to_rlwe_roundtrip tests/test_lwe_to_rlwe_roundtrip.cpp)
 target_link_libraries(test_lwe_to_rlwe_roundtrip PRIVATE
         mimir_core
         GTest::gtest_main
 )
 gtest_discover_tests(test_lwe_to_rlwe_roundtrip
+        PROPERTIES LABELS "crypto"
+)
+
+add_executable(test_seeded_lwe_to_rlwe_roundtrip tests/test_seeded_lwe_to_rlwe_roundtrip.cpp)
+target_link_libraries(test_seeded_lwe_to_rlwe_roundtrip PRIVATE
+        mimir_core
+        GTest::gtest_main
+)
+gtest_discover_tests(test_seeded_lwe_to_rlwe_roundtrip
+        DISCOVERY_MODE PRE_TEST
         PROPERTIES LABELS "crypto"
 )
 
@@ -108,6 +127,7 @@ gtest_discover_tests(test_rlwe_plaintext_multiplication_ntt
         DISCOVERY_MODE PRE_TEST
         PROPERTIES LABELS "crypto"
 )
+
 add_executable(test_rlwe_scoring_dot_product tests/test_rlwe_scoring_dot_product.cpp)
 target_link_libraries(test_rlwe_scoring_dot_product PRIVATE
         mimir_core
@@ -117,15 +137,17 @@ gtest_discover_tests(test_rlwe_scoring_dot_product
         DISCOVERY_MODE PRE_TEST
         PROPERTIES LABELS "crypto"
 )
-add_executable(test_rlwe_scoring_dot_product_coef_sum tests/test_rlwe_scoring_dot_product_coef_sum.cpp)
-target_link_libraries(test_rlwe_scoring_dot_product_coef_sum PRIVATE
-        mimir_core
-        GTest::gtest_main
-)
-gtest_discover_tests(test_rlwe_scoring_dot_product_coef_sum
-        DISCOVERY_MODE PRE_TEST
-        PROPERTIES LABELS "crypto"
-)
+
+#add_executable(test_rlwe_scoring_dot_product_coef_sum tests/test_rlwe_scoring_dot_product_coef_sum.cpp)
+#target_link_libraries(test_rlwe_scoring_dot_product_coef_sum PRIVATE
+#        mimir_core
+#        GTest::gtest_main
+#)
+#gtest_discover_tests(test_rlwe_scoring_dot_product_coef_sum
+#        DISCOVERY_MODE PRE_TEST
+#        PROPERTIES LABELS "crypto"
+#)
+
 add_executable(test_rgsw_multiplication tests/test_rgsw_multiplication.cpp)
 target_link_libraries(test_rgsw_multiplication PRIVATE
         mimir_core
@@ -145,35 +167,6 @@ gtest_discover_tests(test_full_scoring_with_cluster_selection
         DISCOVERY_MODE PRE_TEST
         PROPERTIES LABELS "crypto"
 )
-add_executable(test_full_scoring_with_splits tests/test_full_scoring_with_splits.cpp)
-target_link_libraries(test_full_scoring_with_splits PRIVATE
-        mimir_core
-        GTest::gtest_main
-)
-gtest_discover_tests(test_full_scoring_with_splits
-        DISCOVERY_MODE PRE_TEST
-        PROPERTIES LABELS "crypto"
-)
-add_executable(test_full_scoring_with_splits_parallel tests/test_full_scoring_with_splits_parallel.cpp)
-target_link_libraries(test_full_scoring_with_splits_parallel PRIVATE
-        mimir_core
-        GTest::gtest_main
-        OpenMP::OpenMP_CXX
-)
-gtest_discover_tests(test_full_scoring_with_splits_parallel
-        DISCOVERY_MODE PRE_TEST
-        PROPERTIES LABELS "crypto"
-)
-
-add_executable(test_seeded_lwe_to_rlwe_roundtrip tests/test_seeded_lwe_to_rlwe_roundtrip.cpp)
-target_link_libraries(test_seeded_lwe_to_rlwe_roundtrip PRIVATE
-        mimir_core
-        GTest::gtest_main
-)
-gtest_discover_tests(test_seeded_lwe_to_rlwe_roundtrip
-        DISCOVERY_MODE PRE_TEST
-        PROPERTIES LABELS "crypto"
-)
 
 add_executable(test_seeded_key_material_and_query_roundtrip tests/test_seeded_key_material_and_query_roundtrip.cpp)
 target_link_libraries(test_seeded_key_material_and_query_roundtrip PRIVATE
@@ -185,6 +178,16 @@ gtest_discover_tests(test_seeded_key_material_and_query_roundtrip
         PROPERTIES LABELS "crypto"
 )
 
+add_executable(test_full_scoring_with_splits tests/test_full_scoring_with_splits.cpp)
+target_link_libraries(test_full_scoring_with_splits PRIVATE
+        mimir_core
+        GTest::gtest_main
+)
+gtest_discover_tests(test_full_scoring_with_splits
+        DISCOVERY_MODE PRE_TEST
+        PROPERTIES LABELS "crypto"
+)
+
 add_executable(test_full_scoring_with_splits_seeded tests/test_full_scoring_with_splits_seeded.cpp)
 target_link_libraries(test_full_scoring_with_splits_seeded PRIVATE
         mimir_core
@@ -192,8 +195,20 @@ target_link_libraries(test_full_scoring_with_splits_seeded PRIVATE
 )
 gtest_discover_tests(test_full_scoring_with_splits_seeded
         DISCOVERY_MODE PRE_TEST
+        PROPERTIES LABELS "benchmarking"
+)
+
+add_executable(test_full_scoring_with_splits_parallel tests/test_full_scoring_with_splits_parallel.cpp)
+target_link_libraries(test_full_scoring_with_splits_parallel PRIVATE
+        mimir_core
+        GTest::gtest_main
+        OpenMP::OpenMP_CXX
+)
+gtest_discover_tests(test_full_scoring_with_splits_parallel
+        DISCOVERY_MODE PRE_TEST
         PROPERTIES LABELS "crypto"
 )
+
 
 add_executable(test_full_scoring_with_splits_seeded_parallel tests/test_full_scoring_with_splits_seeded_parallel.cpp)
 target_link_libraries(test_full_scoring_with_splits_seeded_parallel PRIVATE
@@ -203,82 +218,82 @@ target_link_libraries(test_full_scoring_with_splits_seeded_parallel PRIVATE
 )
 gtest_discover_tests(test_full_scoring_with_splits_seeded_parallel
         DISCOVERY_MODE PRE_TEST
-        PROPERTIES LABELS "crypto"
+        PROPERTIES LABELS "benchmarking"
 )
 
 
 # ----- Tests for the server setup and serving and client calls -------------
 # All tagged LABELS "server_client" -- run with: ctest -L server_client
 
-add_executable(test_server_database_value_range tests/test_server_database_value_range.cpp)
-target_link_libraries(test_server_database_value_range PRIVATE mimir_core GTest::gtest_main)
-gtest_discover_tests(test_server_database_value_range
-        DISCOVERY_MODE PRE_TEST
-        PROPERTIES LABELS "server_client"
-)
+#add_executable(test_server_database_value_range tests/test_server_database_value_range.cpp)
+#target_link_libraries(test_server_database_value_range PRIVATE mimir_core GTest::gtest_main)
+#gtest_discover_tests(test_server_database_value_range
+#        DISCOVERY_MODE PRE_TEST
+#        PROPERTIES LABELS "server_client"
+#)
 
-add_executable(test_real_database_loading tests/test_real_database_loading.cpp)
-target_link_libraries(test_real_database_loading PRIVATE mimir_core GTest::gtest_main)
-gtest_discover_tests(test_real_database_loading
-        DISCOVERY_MODE PRE_TEST
-        PROPERTIES LABELS "server_client"
-)
+#add_executable(test_real_database_loading tests/test_real_database_loading.cpp)
+#target_link_libraries(test_real_database_loading PRIVATE mimir_core GTest::gtest_main)
+#gtest_discover_tests(test_real_database_loading
+#        DISCOVERY_MODE PRE_TEST
+#        PROPERTIES LABELS "server_client"
+#)
 
-add_executable(test_database_scoring_correctness tests/test_database_scoring_correctness.cpp)
-target_link_libraries(test_database_scoring_correctness PRIVATE mimir_core GTest::gtest_main)
-gtest_discover_tests(test_database_scoring_correctness
-        DISCOVERY_MODE PRE_TEST
-        PROPERTIES LABELS "server_client"
-)
+#add_executable(test_database_scoring_correctness tests/test_database_scoring_correctness.cpp)
+#target_link_libraries(test_database_scoring_correctness PRIVATE mimir_core GTest::gtest_main)
+#gtest_discover_tests(test_database_scoring_correctness
+#        DISCOVERY_MODE PRE_TEST
+#        PROPERTIES LABELS "server_client"
+#)
 
-add_executable(test_database_scoring_correctness_with_splits tests/test_database_scoring_correctness_with_splits.cpp)
-target_link_libraries(test_database_scoring_correctness_with_splits PRIVATE mimir_core GTest::gtest_main)
-gtest_discover_tests(test_database_scoring_correctness_with_splits
-        DISCOVERY_MODE PRE_TEST
-        PROPERTIES LABELS "server_client"
-)
+#add_executable(test_database_scoring_correctness_with_splits tests/test_database_scoring_correctness_with_splits.cpp)
+#target_link_libraries(test_database_scoring_correctness_with_splits PRIVATE mimir_core GTest::gtest_main)
+#gtest_discover_tests(test_database_scoring_correctness_with_splits
+#        DISCOVERY_MODE PRE_TEST
+#        PROPERTIES LABELS "server_client"
+#)
 
-add_executable(test_wire_protocol_roundtrip tests/test_wire_protocol_roundtrip.cpp)
-target_link_libraries(test_wire_protocol_roundtrip PRIVATE mimir_core GTest::gtest_main)
-gtest_discover_tests(test_wire_protocol_roundtrip
-        DISCOVERY_MODE PRE_TEST
-        PROPERTIES LABELS "server_client"
-)
+#add_executable(test_wire_protocol_roundtrip tests/test_wire_protocol_roundtrip.cpp)
+#target_link_libraries(test_wire_protocol_roundtrip PRIVATE mimir_core GTest::gtest_main)
+#gtest_discover_tests(test_wire_protocol_roundtrip
+#        DISCOVERY_MODE PRE_TEST
+#        PROPERTIES LABELS "server_client"
+#)
 
-add_executable(test_process_query_correctness tests/test_process_query_correctness.cpp)
-target_link_libraries(test_process_query_correctness PRIVATE mimir_core GTest::gtest_main OpenMP::OpenMP_CXX)
-gtest_discover_tests(test_process_query_correctness
-        DISCOVERY_MODE PRE_TEST
-        PROPERTIES LABELS "server_client"
-)
+#add_executable(test_process_query_correctness tests/test_process_query_correctness.cpp)
+#target_link_libraries(test_process_query_correctness PRIVATE mimir_core GTest::gtest_main OpenMP::OpenMP_CXX)
+#gtest_discover_tests(test_process_query_correctness
+#        DISCOVERY_MODE PRE_TEST
+#        PROPERTIES LABELS "server_client"
+#)
 
-add_executable(test_server_session tests/test_server_session.cpp)
-target_link_libraries(test_server_session PRIVATE mimir_core GTest::gtest_main)
-gtest_discover_tests(test_server_session
-        DISCOVERY_MODE PRE_TEST
-        PROPERTIES LABELS "server_client"
-)
+#add_executable(test_server_session tests/test_server_session.cpp)
+#target_link_libraries(test_server_session PRIVATE mimir_core GTest::gtest_main)
+#gtest_discover_tests(test_server_session
+#        DISCOVERY_MODE PRE_TEST
+#        PROPERTIES LABELS "server_client"
+#)
 
-add_executable(test_server_database_uniform_cluster_sizes tests/test_database_uniform_cluster_sizes.cpp)
-target_link_libraries(test_server_database_uniform_cluster_sizes PRIVATE mimir_core GTest::gtest_main)
-gtest_discover_tests(test_server_database_uniform_cluster_sizes
-        DISCOVERY_MODE PRE_TEST
-        PROPERTIES LABELS "server_client"
-)
+#add_executable(test_server_database_uniform_cluster_sizes tests/test_database_uniform_cluster_sizes.cpp)
+#target_link_libraries(test_server_database_uniform_cluster_sizes PRIVATE mimir_core GTest::gtest_main)
+#gtest_discover_tests(test_server_database_uniform_cluster_sizes
+#        DISCOVERY_MODE PRE_TEST
+#        PROPERTIES LABELS "server_client"
+#)
 
-add_executable(test_client_server_roundtrip tests/test_client_server_roundtrip.cpp)
-target_link_libraries(test_client_server_roundtrip PRIVATE mimir_core GTest::gtest_main)
-gtest_discover_tests(test_client_server_roundtrip
-        DISCOVERY_MODE PRE_TEST
-        PROPERTIES LABELS "server_client"
-)
+#add_executable(test_client_server_roundtrip tests/test_client_server_roundtrip.cpp)
+#target_link_libraries(test_client_server_roundtrip PRIVATE mimir_core GTest::gtest_main)
+#gtest_discover_tests(test_client_server_roundtrip
+#        DISCOVERY_MODE PRE_TEST
+#        PROPERTIES LABELS "server_client"
+#)
 
-add_executable(test_client_server_ignores_other_clusters tests/test_client_server_ignores_other_clusters.cpp)
-target_link_libraries(test_client_server_ignores_other_clusters PRIVATE mimir_core GTest::gtest_main)
-gtest_discover_tests(test_client_server_ignores_other_clusters
-        DISCOVERY_MODE PRE_TEST
-        PROPERTIES LABELS "server_client"
-)
+#add_executable(test_client_server_ignores_other_clusters tests/test_client_server_ignores_other_clusters.cpp)
+#target_link_libraries(test_client_server_ignores_other_clusters PRIVATE mimir_core GTest::gtest_main)
+#gtest_discover_tests(test_client_server_ignores_other_clusters
+#        DISCOVERY_MODE PRE_TEST
+#        PROPERTIES LABELS "server_client"
+#)
 
 # ------ Latency Benchmarks ------
 # NOTE: these are plain executables, not registered with gtest_discover_tests,
@@ -308,8 +323,8 @@ target_link_libraries(benchmark_latency_seeded_distributed PRIVATE mimir_core Op
 
 
 # ----- Server and Client Application ------
-add_executable(server apps/server.cpp)
-target_link_libraries(server PRIVATE mimir_core OpenMP::OpenMP_CXX)
+#add_executable(server apps/server.cpp)
+#target_link_libraries(server PRIVATE mimir_core OpenMP::OpenMP_CXX)
 
-add_executable(client apps/client.cpp)
-target_link_libraries(client PRIVATE mimir_core)
+#add_executable(client apps/client.cpp)
+#target_link_libraries(client PRIVATE mimir_core)

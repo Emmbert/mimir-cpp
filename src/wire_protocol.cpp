@@ -122,8 +122,12 @@ private:
 
 std::vector<uint8_t> serialize_seeded_query(const SeededQuery& query) {
     std::vector<uint8_t> buf;
-    write_bytes(buf, query.seed.data(), query.seed.size());
-    write_vec_i64(buf, query.embedding_b_values);
+    // [count][seed bytes]*count -- count is num_component_rings (1 or 2).
+    write_u32(buf, static_cast<uint32_t>(query.seeds.size()));
+    for (const auto& seed : query.seeds) {
+        write_bytes(buf, seed.data(), seed.size());
+    }
+    write_vec_vec_i64(buf, query.embedding_b_values); // [component_ring][j], was write_vec_i64 pre-CRT
     write_vec_vec_i64(buf, query.selector_b_values);
     return buf;
 }
@@ -131,8 +135,12 @@ std::vector<uint8_t> serialize_seeded_query(const SeededQuery& query) {
 SeededQuery deserialize_seeded_query(const std::vector<uint8_t>& buf) {
     ByteReader r(buf);
     SeededQuery query;
-    r.read_bytes(query.seed.data(), query.seed.size());
-    query.embedding_b_values = r.read_vec_i64();
+    uint32_t num_seeds = r.read_u32();
+    query.seeds.resize(num_seeds);
+    for (uint32_t i = 0; i < num_seeds; ++i) {
+        r.read_bytes(query.seeds[i].data(), query.seeds[i].size());
+    }
+    query.embedding_b_values = r.read_vec_vec_i64();
     query.selector_b_values = r.read_vec_vec_i64();
     return query;
 }

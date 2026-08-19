@@ -49,8 +49,32 @@ struct Params {
     int64_t clusters_per_server = 0; ///< c / num_servers (int division)
     int64_t desired_cluster_index = 0; ///< which cluster the client actually wants
 
+    // ---- CRT / multiple component rings ----------------------------------
+    int64_t num_component_rings = 1; ///< r, number of CRT component rings.
+                                      ///< 1 = no CRT (plaintext_modulus used directly,
+                                      ///< as everywhere in this codebase historically).
+                                      ///< 2 = CRT decomposition into two coprime rings,
+                                      ///< Z_p1 x Z_p2 with p2 = comp_ring_modulus - 1
+                                      ///< (consecutive integers, always coprime -- see
+                                      ///< crt.hpp). No other value is currently supported.
+    int64_t comp_ring_modulus = 0;   ///< p1, only meaningful when num_component_rings == 2.
+                                      ///< p2 is always comp_ring_modulus - 1.
+    int64_t combined_component_ring_modulus = 0; ///< p1*(p1-1), cached by
+                                      ///< derive_dependent_parameters() (same pattern as
+                                      ///< cluster_size/splits_per_cluster/clusters_per_server
+                                      ///< -- computed once from the primary fields, not
+                                      ///< recomputed on every access). Only meaningful when
+                                      ///< num_component_rings == 2; 0 otherwise. Must be >=
+                                      ///< plaintext_modulus, validated in
+                                      ///< derive_dependent_parameters() -- plaintext_modulus's
+                                      ///< meaning is UNCHANGED by CRT, it's still the required
+                                      ///< lower bound on the message space size; CRT is an
+                                      ///< implementation detail of how that space is
+                                      ///< represented, not a different requirement.
+
     /// Derives cluster_size / splits_per_cluster / clusters_per_server from the
-    /// primary parameters (database_size, num_clusters, n, num_servers).
+    /// primary parameters (database_size, num_clusters, n, num_servers). Also
+    /// validates num_component_rings/comp_ring_modulus when CRT is in use.
     /// Call this after setting the primary fields and before using the struct anywhere.
     void derive_dependent_parameters();
 
@@ -62,6 +86,16 @@ struct Params {
     static Params make_test_database_params();
 
     static Params make_test_database_params_with_splits();
+
+    /// Convenience factory: small parameters for CRT (two-component-ring)
+    /// correctness tests, mirroring make_test_params()'s hand-picked style
+    /// and n/q/sigma/decomposition bases/database_size/embedding fields
+    /// exactly, so a non-CRT and CRT test can be directly compared on
+    /// otherwise-identical parameters. Same MIMIR_TEST_PARAMS_FILE opt-in as
+    /// make_test_params() -- if set, loads from that file instead (and may
+    /// have num_component_rings == 1, in which case CRT-specific tests
+    /// should skip rather than run against non-CRT parameters).
+    static Params make_test_params_component_rings();
 
     /// Convenience factory: realistic-size parameters for the latency benchmark.
     static Params make_benchmark_params();
@@ -89,7 +123,20 @@ struct CryptoContext {
     std::shared_ptr<FHEDeck::SignedDecompositionGadget> gadget_rgsw;
     FHEDeck::PlaintextEncoding encoding{FHEDeck::PlaintextEncodingType::full_domain, 0, 0};
 
-    /// Builds rlwe_param / both gadgets / encoding from a Params instance.
+    // One encoding per CRT component ring, built from p1=comp_ring_modulus
+    // (and p2=comp_ring_modulus-1 when num_component_rings==2), sharing q.
+    // When num_component_rings == 1, this is a single-entry vector holding
+    // exactly `encoding` above -- CRT-aware code (build_seeded_query,
+    // reconstruct_query, and anything downstream) can always iterate over
+    // component_encodings without a separate CRT/non-CRT branch; the
+    // num_component_rings==1 case falls out automatically as a
+    // length-1 loop. `encoding` itself is kept unchanged and untouched by
+    // CRT -- every existing non-CRT code path keeps using it exactly as
+    // before.
+    std::vector<FHEDeck::PlaintextEncoding> component_encodings;
+
+    /// Builds rlwe_param / both gadgets / encoding / component_encodings
+    /// from a Params instance.
     static CryptoContext from_params(const Params& params);
 };
 
