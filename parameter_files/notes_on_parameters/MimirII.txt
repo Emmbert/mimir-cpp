@@ -1,0 +1,25 @@
+Mimir II
+
+we use best COMMUNICATION
+
+Comparison:
+
+COMMUNICATION
+
+lambda=128.81_n=2048_q=6710857587539969_q_in_bits=53_sigma=3.20_bks=3_bprime=58_l=192_rho=5_dfr=6.5e-14.json
+
+=== Per-query latency (seeded, full database in memory) ===
+stage                           n       mean(ms)    median(ms)  stddev(ms)  min(ms)     max(ms)
+client_query_gen (seeded)       10      96.6956     96.5047     0.7257      95.9036     98.562
+server_processing               10      1008.45     1006.26     16.7683     995.256     1053.27
+query unpacking                 10      9.19062     9.18564     0.0242085   9.15961     9.23594
+RLWE ciphertext switching       10      225.394     224.871     2.63965     222.192     231.526
+RGSW ciphertext switching       10      315.872     317.891     4.42389     309.304     322.881
+scoring calculations            10      457.985     451.937     18.3443     449.029     509.661
+client_decrypt                  10      8.69898     10.1957     3.83615     1.57285     11.622
+
+LATENCY
+
+lambda=128.02_n=2048_q=11760634946818049_q_in_bits=54_sigma=5.20_bks=3_bprime=62_l=192_rho=5_dfr=7.7e-14.json
+
+-- this was worse --
