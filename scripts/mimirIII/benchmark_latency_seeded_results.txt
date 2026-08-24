@@ -1,0 +1,34 @@
+=== Parameters (source: ../parameter_files/mimirIII.json) ===
+n                        = 2048
+q                        = 6710857587539969
+sigma                    = 3.2
+plaintext_modulus        = 98305
+decomposition_base_ksk   = 3
+decomposition_base_prime = 58
+database_size            = 3213835
+embedding_length         = 768
+embedding_precision      = 4
+num_clusters             = 45
+cluster_size             = 71419
+splits_per_cluster       = 35
+num_servers              = 1
+clusters_per_server      = 45
+desired_cluster_index    = 0
+num_component_rings      = 2
+comp_ring_modulus        = 315 (p2 = 314)
+
+=== Client setup / registration latency (seeded) ===
+stage                           n       mean(ms)    median(ms)  stddev(ms)  min(ms)     max(ms)     
+client_setup                    50      0.522327    0.517164    0.0477033   0.443389    0.633899    
+client eval key generation (seeded)50      51.2099     50.9948     0.952298    50.5035     55.678      
+eval key unpacking              50      10.281      10.2964     0.185468    10.0352     10.7541     
+
+=== Per-query latency (seeded, full database in memory) ===
+stage                           n       mean(ms)    median(ms)  stddev(ms)  min(ms)     max(ms)     
+client_query_gen (seeded)       50      205.38      204.962     3.75179     201.78      226.145     
+server_processing               50      49775.1     49954.3     483.052     48858.1     50420.8     
+query unpacking                 50      20.6228     20.6242     0.206271    20.2773     21.3586     
+RLWE ciphertext switching       50      16383.6     16380.1     81.4917     16184.9     16557.8     
+RGSW ciphertext switching       50      5292.71     5532.75     447.182     4490.25     5622.29     
+scoring calculations            50      28078.2     28074       87.7299     27938.8     28449.5     
+client_decrypt                  50      2.01492     2.00645     0.0287658   1.987       2.16028     

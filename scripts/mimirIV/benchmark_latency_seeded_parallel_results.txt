@@ -1,0 +1,35 @@
+OpenMP max threads: 32
+
+=== Parameters (source: ../parameter_files/mimirIV.json) ===
+n                        = 4096
+q                        = 200412177423032321
+sigma                    = 3.2
+plaintext_modulus        = 8193
+decomposition_base_ksk   = 3
+decomposition_base_prime = 13
+database_size            = 3213835
+embedding_length         = 256
+embedding_precision      = 3
+num_clusters             = 24
+cluster_size             = 133910
+splits_per_cluster       = 33
+num_servers              = 1
+clusters_per_server      = 24
+desired_cluster_index    = 0
+num_component_rings      = 1
+
+=== Client setup / registration latency (seeded) ===
+stage                           n       mean(ms)    median(ms)  stddev(ms)  min(ms)     max(ms)     
+client_setup                    100     0.519612    0.522754    0.0418702   0.446039    0.639849    
+client eval key generation (seeded)100     121.08      120.709     2.06695     118.532     130.239     
+eval key unpacking              100     25.8052     25.7937     0.478874    25.1552     27.2379     
+
+=== Per-query latency (seeded, full database in memory) ===
+stage                           n       mean(ms)    median(ms)  stddev(ms)  min(ms)     max(ms)     
+client_query_gen (seeded)       100     262.061     261.975     1.20633     259.524     265.785     
+server_processing               100     1537.38     1542.31     22.212      1488.68     1591.96     
+query unpacking                 100     18.6048     18.7361     0.81898     13.8897     19.2926     
+RLWE ciphertext switching       100     392.749     392.412     4.44382     380.882     411.369     
+RGSW ciphertext switching       100     800.241     806.246     20.819      755.789     842.293     
+scoring calculations            100     325.777     325.407     6.38951     314.131     342.592     
+client_decrypt                  100     3.86117     3.62318     1.11494     0.257209    7.84129     

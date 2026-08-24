@@ -1,0 +1,38 @@
+num_servers: 10, num_component_rings: 2, machines_per_ring: 5, clusters_per_machine: 9 (of 45 total clusters)
+OpenMP max threads: 32
+
+=== Parameters (source: ../parameter_files/mimirI.json) ===
+n                        = 2048
+q                        = 6710857587539969
+sigma                    = 3.2
+plaintext_modulus        = 98305
+decomposition_base_ksk   = 3
+decomposition_base_prime = 58
+database_size            = 3213835
+embedding_length         = 192
+embedding_precision      = 5
+num_clusters             = 45
+cluster_size             = 71419
+splits_per_cluster       = 35
+num_servers              = 10
+clusters_per_server      = 5
+desired_cluster_index    = 0
+num_component_rings      = 2
+comp_ring_modulus        = 315 (p2 = 314)
+
+=== Client setup / registration latency (seeded) ===
+stage                           n       mean(ms)    median(ms)  stddev(ms)  min(ms)     max(ms)     
+client_setup                    100     0.503068    0.513464    0.0488694   0.229129    0.639138    
+client eval key generation (seeded)100     50.5539     50.1648     1.15441     49.5209     56.134      
+eval key unpacking              100     10.3898     10.3678     0.251262    10.0577     11.1196     
+
+=== Per-query latency (seeded, compute-only, no network cost) ===
+stage                           n       mean(ms)    median(ms)  stddev(ms)  min(ms)     max(ms)     
+client_query_gen (seeded)       10      92.9199     92.8264     0.439661    92.3192     93.5866     
+server_processing               10      519.695     520.004     6.85556     511.097     530.896     
+query unpacking                 10      9.27602     9.27762     0.0137124   9.25782     9.30231     
+RLWE ciphertext switching (one machine's share)10      52.586      52.25       2.00097     50.2299     55.3616     
+RGSW ciphertext switching (one machine's share)10      131.374     131.287     1.56775     129.267     133.985     
+scoring calculations (one machine's share)10      49.1842     49.1062     1.88585     46.8844     52.022      
+cross-machine summation         10      2.28551     0.977557    1.96898     0.772118    5.57915     
+client_decrypt                  10      7.53141     9.1158      3.88823     1.88058     11.8445     

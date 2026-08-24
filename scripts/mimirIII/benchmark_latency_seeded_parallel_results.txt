@@ -1,0 +1,36 @@
+OpenMP max threads: 32
+
+=== Parameters (source: ../parameter_files/mimirIII.json) ===
+n                        = 2048
+q                        = 6710857587539969
+sigma                    = 3.2
+plaintext_modulus        = 98305
+decomposition_base_ksk   = 3
+decomposition_base_prime = 58
+database_size            = 3213835
+embedding_length         = 768
+embedding_precision      = 4
+num_clusters             = 45
+cluster_size             = 71419
+splits_per_cluster       = 35
+num_servers              = 1
+clusters_per_server      = 45
+desired_cluster_index    = 0
+num_component_rings      = 2
+comp_ring_modulus        = 315 (p2 = 314)
+
+=== Client setup / registration latency (seeded) ===
+stage                           n       mean(ms)    median(ms)  stddev(ms)  min(ms)     max(ms)     
+client_setup                    100     0.512499    0.513863    0.0448311   0.439178    0.633407    
+client eval key generation (seeded)100     49.8776     49.7062     0.808758    49.2222     54.7759     
+eval key unpacking              100     10.229      10.2018     0.191383    9.97154     10.8952     
+
+=== Per-query latency (seeded, full database in memory) ===
+stage                           n       mean(ms)    median(ms)  stddev(ms)  min(ms)     max(ms)     
+client_query_gen (seeded)       100     232.926     232.023     5.2052      228.951     261.191     
+server_processing               100     2786.1      2786.23     26.2408     2717.95     2866.09     
+query unpacking                 100     21.9767     22.0015     0.195804    21.3828     22.8467     
+RLWE ciphertext switching       100     873.173     871.22      9.18804     856.174     916.866     
+RGSW ciphertext switching       100     314.85      314.015     5.19971     306.932     332.293     
+scoring calculations            100     1576.09     1578.75     23.4724     1508.96     1637.88     
+client_decrypt                  100     9.80751     10.2927     2.26705     1.52251     16.9743     
