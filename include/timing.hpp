@@ -24,9 +24,24 @@ namespace psearch {
 ///       // ... do the work ...
 ///   } // duration recorded automatically on scope exit
 ///   rec.print_summary();
+///
+/// Nesting is tracked automatically: a stage is shown as a child of every
+/// ScopedTimer that is still open when the stage is first seen (either via
+/// its own ScopedTimer or via add_sample). Children are printed indented with
+/// "-> ", so stage names must NOT carry a manual "  -> " prefix:
+///
+///   server_processing
+///   -> query unpacking
+///     -> query stream unpacking
+///   -> scoring calculations
+///     -> score computation      <- rec.add_sample(...) inside t_scoring's scope
+///
+/// Not thread-safe: create timers and call add_sample from one thread only
+/// (all benchmarks do this outside their OpenMP regions).
 class LatencyRecorder {
 public:
     void add_sample(const std::string& stage, double milliseconds) {
+        note_stage_seen(stage);
         samples_[stage].push_back(milliseconds);
     }
 
@@ -75,15 +90,42 @@ public:
     /// Prints a table of every recorded stage to `os` (defaults to stdout).
     /// Call once for std::cout and again with an ofstream to also write the
     /// same table to a file.
+    ///
+    /// The stage column is as wide as the longest (indented) label, and all
+    /// numbers are right-aligned with a fixed 3 decimals (i.e. microsecond
+    /// resolution), so columns always line up.
     void print_summary(std::ostream& os = std::cout) const {
-        os << std::left << std::setw(32) << "stage" << std::setw(8) << "n" << std::setw(12) << "mean(ms)"
-           << std::setw(12) << "median(ms)" << std::setw(12) << "stddev(ms)" << std::setw(12) << "min(ms)"
-           << std::setw(12) << "max(ms)" << "\n";
+        std::vector<std::string> labels;
+        labels.reserve(stage_order_.size());
+        size_t label_width = 5; // "stage"
         for (const auto& stage : stage_order_) {
-            os << std::left << std::setw(32) << stage << std::setw(8) << num_samples(stage) << std::setw(12)
-               << mean_ms(stage) << std::setw(12) << median_ms(stage) << std::setw(12) << stddev_ms(stage)
-               << std::setw(12) << min_ms(stage) << std::setw(12) << max_ms(stage) << "\n";
+            labels.push_back(indented_label(stage));
+            label_width = std::max(label_width, labels.back().size());
         }
+        label_width += 2;
+
+        constexpr int kCountWidth = 6;
+        constexpr int kNumWidth = 13;
+
+        std::ios_base::fmtflags saved_flags = os.flags();
+        std::streamsize saved_precision = os.precision();
+
+        os << std::left << std::setw(static_cast<int>(label_width)) << "stage" << std::right
+           << std::setw(kCountWidth) << "n" << std::setw(kNumWidth) << "mean(ms)" << std::setw(kNumWidth)
+           << "median(ms)" << std::setw(kNumWidth) << "stddev(ms)" << std::setw(kNumWidth) << "min(ms)"
+           << std::setw(kNumWidth) << "max(ms)" << "\n";
+
+        os << std::fixed << std::setprecision(3);
+        for (size_t i = 0; i < stage_order_.size(); ++i) {
+            const auto& stage = stage_order_[i];
+            os << std::left << std::setw(static_cast<int>(label_width)) << labels[i] << std::right
+               << std::setw(kCountWidth) << num_samples(stage) << std::setw(kNumWidth) << mean_ms(stage)
+               << std::setw(kNumWidth) << median_ms(stage) << std::setw(kNumWidth) << stddev_ms(stage)
+               << std::setw(kNumWidth) << min_ms(stage) << std::setw(kNumWidth) << max_ms(stage) << "\n";
+        }
+
+        os.flags(saved_flags);
+        os.precision(saved_precision);
     }
 
     /// Drops all currently recorded samples. Used to discard a warm-up phase
@@ -91,19 +133,30 @@ public:
     void clear() {
         samples_.clear();
         stage_order_.clear();
+        stage_depth_.clear();
     }
 
 private:
     std::unordered_map<std::string, std::vector<double>> samples_;
-    std::vector<std::string> stage_order_; // preserves insertion order for readable printing
+    std::vector<std::string> stage_order_;             // preserves insertion order for readable printing
+    std::unordered_map<std::string, int> stage_depth_; // nesting depth when the stage was first seen
+    int open_timers_ = 0;                              // ScopedTimers currently running
 
     friend class ScopedTimer;
+
+    /// Registers `stage` (once) at the current nesting depth.
     void note_stage_seen(const std::string& stage) {
-        if (samples_.find(stage) == samples_.end() || samples_.at(stage).empty()) {
-            if (std::find(stage_order_.begin(), stage_order_.end(), stage) == stage_order_.end()) {
-                stage_order_.push_back(stage);
-            }
+        if (stage_depth_.emplace(stage, open_timers_).second) {
+            stage_order_.push_back(stage);
         }
+    }
+
+    std::string indented_label(const std::string& stage) const {
+        int depth = stage_depth_.at(stage);
+        if (depth == 0) {
+            return stage;
+        }
+        return std::string(static_cast<size_t>(2 * (depth - 1)), ' ') + "-> " + stage;
     }
 };
 
@@ -113,8 +166,10 @@ private:
 class ScopedTimer {
 public:
     ScopedTimer(LatencyRecorder& recorder, std::string stage)
-        : recorder_(recorder), stage_(std::move(stage)), start_(std::chrono::steady_clock::now()) {
-        recorder_.note_stage_seen(stage_);
+        : recorder_(recorder), stage_(std::move(stage)) {
+        recorder_.note_stage_seen(stage_); // registered at the depth of its parent timers
+        ++recorder_.open_timers_;
+        start_ = std::chrono::steady_clock::now();
     }
 
     ~ScopedTimer() { stop(); }
@@ -127,6 +182,7 @@ public:
         if (stopped_) return;
         auto end = std::chrono::steady_clock::now();
         double ms = std::chrono::duration<double, std::milli>(end - start_).count();
+        --recorder_.open_timers_;
         recorder_.add_sample(stage_, ms);
         stopped_ = true;
     }

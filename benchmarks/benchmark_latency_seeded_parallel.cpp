@@ -10,6 +10,23 @@
 // working sets can exceed RAM and get OOM-killed. If that happens, use
 // benchmark_latency_seeded_parallel_pool.cpp instead.
 //
+// Everything that crosses the network is bit-packed into byte streams (see
+// stream_packing.hpp) and the receiving side works ONLY on what it unpacked:
+//   - eval keys: one stream (one-time),
+//   - query:     one stream per component ring (client -> server),
+//   - response:  one stream per component ring, s RLWE ciphertexts each
+//                (server -> client).
+// The SERVER packs its per-ring response streams in parallel across rings; the
+// query is unpacked as a whole (the selector lives in stream 0), and the eval
+// keys are a single stream. All CLIENT-side stages -- query stream packing,
+// response stream unpacking and decryption -- run single-threaded, so the
+// client is modelled as a single-threaded device even when the server is given
+// the full thread budget. (Note that library calls invoked from the client
+// path may still parallelise internally; only the loops owned by this
+// benchmark are serialised here.)
+// The results file reports the theoretical vs. actual stream sizes right
+// after the parameters (see communication_cost.hpp).
+//
 // Run directly, with the desired thread count set via the environment:
 //   OMP_NUM_THREADS=16 ./benchmark_latency_seeded_parallel_fulldb
 //   OMP_NUM_THREADS=16 ./benchmark_latency_seeded_parallel_fulldb params.json 1
@@ -24,6 +41,7 @@
 #include <vector>
 #include <filesystem>
 
+#include "communication_cost.hpp"
 #include "crt.hpp"
 #include "db_polynomial.hpp"
 #include "fhe_deck.h"
@@ -33,6 +51,7 @@
 #include "seeded_distribution.hpp"
 #include "seeded_eval_keys.hpp"
 #include "seeded_query.hpp"
+#include "stream_packing.hpp"
 #include "timing.hpp"
 
 using namespace FHEDeck;
@@ -44,7 +63,7 @@ constexpr int kSetupWarmupRuns = 2;
 constexpr int kSetupMeasuredRuns = 100;
 
 constexpr int kQueryWarmupRuns = 2;
-constexpr int kQueryMeasuredRuns = 100;
+constexpr int kQueryMeasuredRuns = 10;
 
 std::filesystem::path compute_output_path(const std::string& params_arg) {
     const std::string base_name = "benchmark_latency_seeded_parallel_results.txt";
@@ -116,8 +135,18 @@ DbEval build_database(const CryptoContext& ctx, const Params& params, std::mt199
     return db_eval;
 }
 
+std::vector<size_t> stream_sizes(const std::vector<ByteStream>& streams) {
+    std::vector<size_t> sizes;
+    sizes.reserve(streams.size());
+    for (const auto& s : streams) {
+        sizes.push_back(s.size());
+    }
+    return sizes;
+}
+
 ClientPublicMaterial run_setup_and_registration(const CryptoContext& ctx, const Params& params,
-                                                 ClientSecretMaterial& secret, LatencyRecorder& rec) {
+                                                 ClientSecretMaterial& secret, LatencyRecorder& rec,
+                                                 MeasuredStreamSizes& sizes) {
     {
         ScopedTimer t(rec, "client_setup");
         secret = generate_client_secret_material(ctx, params);
@@ -129,16 +158,31 @@ ClientPublicMaterial run_setup_and_registration(const CryptoContext& ctx, const 
         eval_wire = build_seeded_public_material(ctx, secret);
     }
 
+    // --- Client: bit-pack the eval keys into ONE byte stream (this is what is sent).
+    ByteStream eval_key_stream;
+    {
+        ScopedTimer t(rec, "client eval key stream packing");
+        eval_key_stream = pack_public_material(params, eval_wire);
+    }
+    sizes.record_keys(eval_key_stream.size());
+
+    // --- Server: works only on the received stream.
     ClientPublicMaterial pub;
     {
         ScopedTimer t(rec, "eval key unpacking");
-        pub = reconstruct_public_material(ctx, params, eval_wire);
+        SeededClientPublicMaterial received;
+        {
+            ScopedTimer t_stream(rec, "eval key stream unpacking");
+            received = unpack_public_material(params, eval_key_stream);
+        }
+        pub = reconstruct_public_material(ctx, params, received);
     }
     return pub;
 }
 
 void run_one_query(const CryptoContext& ctx, const Params& params, ClientSecretMaterial& secret,
-                    const ClientPublicMaterial& pub, std::mt19937_64& rng, LatencyRecorder& rec) {
+                    const ClientPublicMaterial& pub, std::mt19937_64& rng, LatencyRecorder& rec,
+                    MeasuredStreamSizes& sizes) {
     int64_t r = params.num_component_rings;
     int64_t total_pairs = params.num_clusters * params.splits_per_cluster;
 
@@ -155,6 +199,17 @@ void run_one_query(const CryptoContext& ctx, const Params& params, ClientSecretM
         query_wire = build_seeded_query(ctx, params, secret, embedding_values, params.desired_cluster_index);
     }
 
+    // --- Client: one bit-packed stream per component ring (this is what is sent).
+    // Single-threaded: the client is modelled as a single-threaded device.
+    std::vector<ByteStream> upload_streams(static_cast<size_t>(r)); // [ring]
+    {
+        ScopedTimer t(rec, "client query stream packing");
+        for (int64_t ring = 0; ring < r; ++ring) {
+            upload_streams[static_cast<size_t>(ring)] = pack_query_ring(params, query_wire, ring);
+        }
+    }
+    std::vector<ByteStream> download_streams(static_cast<size_t>(r)); // [ring]
+
     std::vector<std::vector<RLWECT>> final_result(static_cast<size_t>(r));
     ReconstructedQuery query;
     std::vector<std::vector<std::unique_ptr<RLWECTEvalForm>>> query_eval(static_cast<size_t>(r));
@@ -165,7 +220,12 @@ void run_one_query(const CryptoContext& ctx, const Params& params, ClientSecretM
 
         {
             ScopedTimer t_unpack(rec, "query unpacking");
-            query = reconstruct_query(ctx, params, query_wire);
+            SeededQuery received_query;
+            {
+                ScopedTimer t_stream(rec, "query stream unpacking");
+                received_query = unpack_query(params, upload_streams);
+            }
+            query = reconstruct_query(ctx, params, received_query);
         }
 
         {
@@ -239,28 +299,49 @@ void run_one_query(const CryptoContext& ctx, const Params& params, ClientSecretM
                 }
             }
         }
+
+        {
+            // --- Server: one bit-packed stream per component ring, s ciphertexts each.
+            ScopedTimer t_pack(rec, "response stream packing");
+            #pragma omp parallel for schedule(static)
+            for (int64_t ring = 0; ring < r; ++ring) {
+                download_streams[static_cast<size_t>(ring)] =
+                    pack_response_ring(params, final_result[static_cast<size_t>(ring)]);
+            }
+        }
+    }
+
+    sizes.record_query(stream_sizes(upload_streams), stream_sizes(download_streams));
+
+    // --- Client: works only on the received streams. Single-threaded.
+    std::vector<std::vector<RLWECT>> received_result(static_cast<size_t>(r)); // [ring][s]
+    {
+        ScopedTimer t(rec, "client response stream unpacking");
+        for (int64_t ring = 0; ring < r; ++ring) {
+            received_result[static_cast<size_t>(ring)] =
+                unpack_response_ring(ctx, params, download_streams[static_cast<size_t>(ring)]);
+        }
     }
 
     {
         ScopedTimer t(rec, "client_decrypt");
 
+        // Single-threaded, like every other client-side stage.
         std::vector<std::vector<Vector>> decrypted(static_cast<size_t>(params.splits_per_cluster)); // [s][ring]
         for (auto& row : decrypted) {
             row.resize(static_cast<size_t>(r));
         }
 
         int64_t total_decrypts = params.splits_per_cluster * r;
-        #pragma omp parallel for schedule(dynamic)
         for (int64_t idx = 0; idx < total_decrypts; ++idx) {
             int64_t s = idx / r;
             int64_t ring = idx % r;
             decrypted[static_cast<size_t>(s)][static_cast<size_t>(ring)] = secret.rlwe_sk->decrypt_vector(
-                final_result[static_cast<size_t>(ring)][static_cast<size_t>(s)],
+                received_result[static_cast<size_t>(ring)][static_cast<size_t>(s)],
                 ctx.component_encodings[static_cast<size_t>(ring)]);
         }
 
         if (r == 2) {
-            #pragma omp parallel for schedule(dynamic) collapse(2)
             for (int64_t s = 0; s < params.splits_per_cluster; ++s) {
                 for (int64_t i = 0; i < params.n; ++i) {
                     [[maybe_unused]] int64_t recomposed = crt_recompose(
@@ -290,13 +371,20 @@ int main(int argc, char** argv) {
     LatencyRecorder rec;
     ClientSecretMaterial secret;
 
+    const CommunicationCost theoretical_cost = theoretical_communication_cost(params);
+    MeasuredStreamSizes stream_sizes_measured;
+
     std::cout << "Warming up client setup/registration (" << kSetupWarmupRuns << " runs)...\n";
-    for (int i = 0; i < kSetupWarmupRuns; ++i) run_setup_and_registration(ctx, params, secret, rec);
+    for (int i = 0; i < kSetupWarmupRuns; ++i) {
+        run_setup_and_registration(ctx, params, secret, rec, stream_sizes_measured);
+    }
     rec.clear();
 
     std::cout << "Measuring client setup/registration (" << kSetupMeasuredRuns << " runs)...\n";
     ClientPublicMaterial pub;
-    for (int i = 0; i < kSetupMeasuredRuns; ++i) pub = run_setup_and_registration(ctx, params, secret, rec);
+    for (int i = 0; i < kSetupMeasuredRuns; ++i) {
+        pub = run_setup_and_registration(ctx, params, secret, rec, stream_sizes_measured);
+    }
 
     std::cout << "\n=== Client setup / registration latency (seeded) ===\n";
     rec.print_summary();
@@ -304,22 +392,28 @@ int main(int argc, char** argv) {
     LatencyRecorder query_rec;
 
     std::cout << "\nWarming up per-query pipeline (" << kQueryWarmupRuns << " runs)...\n";
-    for (int i = 0; i < kQueryWarmupRuns; ++i) run_one_query(ctx, params, secret, pub, rng, query_rec);
+    for (int i = 0; i < kQueryWarmupRuns; ++i) {
+        run_one_query(ctx, params, secret, pub, rng, query_rec, stream_sizes_measured);
+    }
     query_rec.clear();
 
     std::cout << "Measuring per-query pipeline (" << kQueryMeasuredRuns << " runs)...\n";
     for (int i = 0; i < kQueryMeasuredRuns; ++i) {
         std::cout << "Iteration " << i << " " << std::flush;
-        run_one_query(ctx, params, secret, pub, rng, query_rec);
+        run_one_query(ctx, params, secret, pub, rng, query_rec, stream_sizes_measured);
     }
 
     std::cout << "\n=== Per-query latency (seeded, full database in memory) ===\n";
     query_rec.print_summary();
 
+    std::cout << "\n";
+    print_communication_cost(std::cout, params, theoretical_cost, stream_sizes_measured);
+
     std::ofstream out(kOutputFilePath);
     if (out) {
         out << "OpenMP max threads: " << omp_get_max_threads() << "\n\n";
         print_params(out, params, params_source);
+        print_communication_cost(out, params, theoretical_cost, stream_sizes_measured);
         out << "=== Client setup / registration latency (seeded) ===\n";
         rec.print_summary(out);
         out << "\n=== Per-query latency (seeded, full database in memory) ===\n";

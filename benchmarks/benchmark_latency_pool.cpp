@@ -16,7 +16,9 @@
 //   ./benchmark_latency_pool
 //   ./benchmark_latency_pool params.json 1
 // TODO embedding sampling should be moved out of the query generation time (because the rejection sampling takes longer
-// TODO than the real embedding generation
+// TODO than the real embedding generation.
+// TODO Also the Byte-stream packing and unpacking can be added for optimla communication cost.
+
 
 #include <chrono>
 #include <fstream>

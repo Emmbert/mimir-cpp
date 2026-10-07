@@ -51,6 +51,8 @@ add_library(mimir_core
         src/seeded_distribution.cpp
         src/seeded_eval_keys.cpp
         src/seeded_query.cpp
+        src/stream_packing.cpp
+        src/communication_cost.cpp
         #src/server_db.cpp
         #src/database_metadata.cpp
         #src/server_query_processing.cpp
@@ -219,6 +221,16 @@ target_link_libraries(test_full_scoring_with_splits_seeded_parallel PRIVATE
 gtest_discover_tests(test_full_scoring_with_splits_seeded_parallel
         DISCOVERY_MODE PRE_TEST
         PROPERTIES LABELS "benchmarking"
+)
+
+add_executable(test_stream_packing_roundtrip tests/test_stream_packing_roundtrip.cpp)
+target_link_libraries(test_stream_packing_roundtrip PRIVATE
+        mimir_core
+        GTest::gtest_main
+)
+gtest_discover_tests(test_stream_packing_roundtrip
+        DISCOVERY_MODE PRE_TEST
+        PROPERTIES LABELS "crypto"
 )
 
 

@@ -15,7 +15,8 @@
 //   ./benchmark_latency_fulldb params.json 1
 
 // TODO embedding sampling should be moved out of the query generation time (because the rejection sampling takes longer
-// TODO than the real embedding generation
+// TODO than the real embedding generation.
+// TODO Also the Byte-stream packing and unpacking can be added for optimla communication cost.
 
 #include <chrono>
 #include <fstream>
@@ -39,8 +40,8 @@ namespace {
 constexpr int kSetupWarmupRuns = 2;
 constexpr int kSetupMeasuredRuns = 10;
 
-constexpr int kQueryWarmupRuns = 2;
-constexpr int kQueryMeasuredRuns = 10;
+constexpr int kQueryWarmupRuns = 1;
+constexpr int kQueryMeasuredRuns = 1;
 
 const char* kOutputFilePath = "benchmark_latency_results.txt";
 

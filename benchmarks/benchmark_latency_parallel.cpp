@@ -14,7 +14,9 @@
 //   OMP_NUM_THREADS=16 ./benchmark_latency_parallel_fulldb
 //   OMP_NUM_THREADS=32 ./benchmark_latency_parallel_fulldb params.json 1
 // TODO embedding sampling should be moved out of the query generation time (because the rejection sampling takes longer
-// TODO than the real embedding generation
+// TODO than the real embedding generation.
+// TODO Also the Byte-stream packing and unpacking can be added for optimla communication cost.
+
 
 #include <omp.h>
 

@@ -29,11 +29,13 @@
 //   OMP_NUM_THREADS=16 ./benchmark_latency_distributed
 //   OMP_NUM_THREADS=16 ./benchmark_latency_distributed params.json 8
 // TODO embedding sampling should be moved out of the query generation time (because the rejection sampling takes longer
-// TODO than the real embedding generation
+// TODO than the real embedding generation.
+//
+// TODO Also the Byte-stream packing and unpacking can be added for optimla communication cost.
 //
 // TODO Embedding LWE to RLWE switching can be distributed over several machines.
 //
-// TODO Both todos from the to are already applied on the seeded benchmarks.
+// TODO All three todos from the to are already applied on the seeded benchmarks.
 
 #include <omp.h>
 

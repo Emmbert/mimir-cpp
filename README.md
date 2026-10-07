@@ -4,6 +4,10 @@ This repo contains benchmarks for Mímir. The code needs AVX-support to be run i
 benchmarks of Mímir, the database loading, and server and clienet implementation are not needed. Also the tests are not
 important to verify the results from the paper.
 
+#### Open TODOs for optimization: 
+Send RLWE'(sk^2) for RLWE->RGSW switch. At the moment we send RGSW(sk) = (RLWE'(sk*m), RLWE'(m)) with m=sk.
+This costs more computation in the RLWE' to RGSW switch. And more communication in the setup.
+
 ## Setup:
 
 Clone
