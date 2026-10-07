@@ -106,7 +106,10 @@ FHEDeck::Polynomial build_polynomial_from_raw_values(const Params& params, const
     }
     FHEDeck::Polynomial poly(params.n, params.q);
     for (int64_t i = 0; i < params.n; ++i) {
-        poly[i] = reduce_mod(raw_values[static_cast<size_t>(i)], modulus);
+        //int64_t centered = centered_residue(reduce_mod(raw_values[i], modulus), modulus); // −16 stays −16
+        //poly[i] = reduce_mod(centered, params.q);                                         // stored as q − 16
+        poly[i] = reduce_mod(raw_values[static_cast<size_t>(i)], params.q);
+        //poly[i] = reduce_mod(raw_values[static_cast<size_t>(i)], modulus);
     }
     return poly;
 }

@@ -47,6 +47,7 @@
 #include <omp.h>
 
 #include <memory>
+#include <iostream>
 #include <random>
 #include <vector>
 
@@ -87,8 +88,16 @@ RLWECT compute_split_score(const CryptoContext& ctx, const std::vector<std::uniq
 TEST_P(FullScoringWithSplitsParallel, MatchesSingleThreadedResultUnderMultithreading) {
     Params params = GetParam()();
 
-    ASSERT_GT(params.num_clusters, 1)
-        << "This test needs num_clusters > 1 to exercise cluster selection meaningfully.";
+    // num_clusters == 1 is a valid parameter set (e.g. Mimir-III). The body
+    // handles it: the cluster loop runs once on cluster 0, whose RGSW selector
+    // bit is 1, and every correctness check still applies. Only the
+    // "other clusters are masked to zero" property is not exercised then;
+    // every set with num_clusters > 1 still covers it.
+    ASSERT_GE(params.num_clusters, 1);
+    if (params.num_clusters == 1) {
+        std::cout << "[info] num_clusters == 1: running on the single cluster; "
+                  << "cluster masking of other clusters is not exercised.\n";
+    }
     ASSERT_GE(params.desired_cluster_index, 0);
     ASSERT_LT(params.desired_cluster_index, params.num_clusters);
     /*if (params.splits_per_cluster == 1) {
