@@ -11,8 +11,9 @@ namespace psearch {
 
 /// The seed-compressed form of a client's eval keys (registration-time),
 /// mirroring the layout of the actual objects: automorphism keys
-/// (LWEToRLWEKeySwitchKey's ext_key_content) and the RGSW switch key's
-/// ct_of_sk_dest (message row + message*sk row). Only ONE seed covers the
+/// (LWEToRLWEKeySwitchKey's ext_key_content) and the scheme switching key
+/// RLWE'(sk^2) used by LWEToRGSWKeySwitchKey (ePrint 2023/112, Sec. 3.1).
+/// Only ONE seed covers the
 /// whole batch -- both pieces are generated from the same continuing
 /// SeededUniformDistribution, in the same order generate_client_public_material
 /// already builds them in (automorphism keys first, then the RGSW switch
@@ -25,9 +26,10 @@ struct SeededClientPublicMaterial {
     /// own loop order (i = 2, 4, 8, ..., n).
     std::vector<std::vector<std::vector<int64_t>>> automorphism_b_values;
 
-    /// [digit][coefficient], each.
-    std::vector<std::vector<int64_t>> rgsw_message_row_b_values;
-    std::vector<std::vector<int64_t>> rgsw_message_sk_row_b_values;
+    /// RLWE'(sk^2) = (RLWE(B'^i * sk^2))_i, [digit][coefficient], d' digits.
+    /// Replaces the former RGSW(sk) = (RLWE'(sk), RLWE'(sk^2)), which needed
+    /// 2 * d' b-polynomials.
+    std::vector<std::vector<int64_t>> rgsw_sk_squared_b_values;
 };
 
 /// Client-side: builds real eval keys using a fresh seed (swapping

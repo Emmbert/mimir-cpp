@@ -20,7 +20,8 @@ struct CommunicationCost {
 /// Theoretical cost, counting 128 bits per seed and ceil(log2 q) bits per
 /// transmitted coefficient, with no byte alignment:
 ///
-///   keys     = 128 + (log2(n) * d_ksk * n + 2 * d' * n) * ceil(log2 q)
+///   keys     = 128 + (log2(n) * d_ksk * n + d' * n) * ceil(log2 q)
+///              (the d' * n term is RLWE'(sk^2); it was 2 * d' * n for RGSW(sk))
 ///   upload   = r * 128 + (r * l + C * d') * ceil(log2 q)
 ///   download = r * s * 2 * n * ceil(log2 q)
 ///

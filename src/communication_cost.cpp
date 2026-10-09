@@ -41,7 +41,7 @@ CommunicationCost theoretical_communication_cost(const Params& params) {
     auto r = static_cast<double>(w.num_component_rings);
 
     double key_coeffs = static_cast<double>(w.automorphism_levels * w.ksk_digits) * n +
-                        2.0 * static_cast<double>(w.prime_digits) * n;
+                        static_cast<double>(w.prime_digits) * n; // RLWE'(sk^2)
     double upload_coeffs = r * static_cast<double>(w.embedding_length) +
                            static_cast<double>(w.num_clusters * w.prime_digits);
     double download_coeffs = r * static_cast<double>(w.splits_per_cluster) * 2.0 * n;

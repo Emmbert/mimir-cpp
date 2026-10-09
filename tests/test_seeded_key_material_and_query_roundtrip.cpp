@@ -23,7 +23,7 @@
 //      exactly one selector, reused for every ring), switched via the
 //      reconstructed lwe_to_rgsw_ksk, then RGSW-multiplied against a random
 //      dense RLWE ciphertext (CRT-split into per-ring Vectors) and
-//      decrypted -- exercises ct_of_sk_dest's reconstruction specifically,
+//      decrypted -- exercises RLWE'(sk^2)'s reconstruction specifically,
 //      which check 1 never touches. Here centered_residue IS needed on the
 //      recomposed value, since the raw database value can be negative --
 //      same reasoning as test_rgsw_multiplication.cpp.
@@ -161,7 +161,7 @@ TEST_P(SeededKeyMaterialAndQueryRoundtrip, ReconstructedEvalKeysSwitchAndDecrypt
         }
 
         // --- Check 2: a selector-style LWE' ciphertext, switched via the
-        // RECONSTRUCTED lwe_to_rgsw_ksk (exercises ct_of_sk_dest's
+        // RECONSTRUCTED lwe_to_rgsw_ksk (exercises RLWE'(sk^2)'s
         // reconstruction specifically). UNCHANGED by CRT -- exactly ONE
         // selector, reused for every ring below -- then RGSW-multiplied
         // against a random dense RLWE ciphertext (CRT-split into per-ring

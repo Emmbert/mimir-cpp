@@ -100,7 +100,7 @@ WireShape wire_shape(const Params& params) {
 
 std::size_t public_material_stream_bytes(const Params& params) {
     WireShape w = wire_shape(params);
-    uint64_t coeffs = static_cast<uint64_t>(w.automorphism_levels * w.ksk_digits * w.n + 2 * w.prime_digits * w.n);
+    uint64_t coeffs = static_cast<uint64_t>(w.automorphism_levels * w.ksk_digits * w.n + w.prime_digits * w.n);
     return kSeedBytes + bits_to_bytes(coeffs * static_cast<uint64_t>(w.bits));
 }
 
@@ -200,8 +200,7 @@ ByteStream pack_public_material(const Params& params, const SeededClientPublicMa
     const auto n = static_cast<std::size_t>(w.n);
 
     if (static_cast<int64_t>(material.automorphism_b_values.size()) != w.automorphism_levels ||
-        static_cast<int64_t>(material.rgsw_message_row_b_values.size()) != w.prime_digits ||
-        static_cast<int64_t>(material.rgsw_message_sk_row_b_values.size()) != w.prime_digits) {
+        static_cast<int64_t>(material.rgsw_sk_squared_b_values.size()) != w.prime_digits) {
         throw std::invalid_argument("pack_public_material: material shape does not match params");
     }
 
@@ -216,11 +215,8 @@ ByteStream pack_public_material(const Params& params, const SeededClientPublicMa
             write_coefficients(out, digit, n, w.bits, params.q, "automorphism key digit");
         }
     }
-    for (const auto& digit : material.rgsw_message_row_b_values) {
-        write_coefficients(out, digit, n, w.bits, params.q, "RGSW message-row digit");
-    }
-    for (const auto& digit : material.rgsw_message_sk_row_b_values) {
-        write_coefficients(out, digit, n, w.bits, params.q, "RGSW message*sk-row digit");
+    for (const auto& digit : material.rgsw_sk_squared_b_values) {
+        write_coefficients(out, digit, n, w.bits, params.q, "RLWE'(sk^2) digit");
     }
     return out.finish();
 }
@@ -241,13 +237,9 @@ SeededClientPublicMaterial unpack_public_material(const Params& params, const By
             level.push_back(read_coefficients(in, n, w.bits, params.q));
         }
     }
-    material.rgsw_message_row_b_values.reserve(static_cast<std::size_t>(w.prime_digits));
+    material.rgsw_sk_squared_b_values.reserve(static_cast<std::size_t>(w.prime_digits));
     for (int64_t d = 0; d < w.prime_digits; ++d) {
-        material.rgsw_message_row_b_values.push_back(read_coefficients(in, n, w.bits, params.q));
-    }
-    material.rgsw_message_sk_row_b_values.reserve(static_cast<std::size_t>(w.prime_digits));
-    for (int64_t d = 0; d < w.prime_digits; ++d) {
-        material.rgsw_message_sk_row_b_values.push_back(read_coefficients(in, n, w.bits, params.q));
+        material.rgsw_sk_squared_b_values.push_back(read_coefficients(in, n, w.bits, params.q));
     }
     in.expect_end();
     return material;

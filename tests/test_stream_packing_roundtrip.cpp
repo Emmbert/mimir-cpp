@@ -138,7 +138,7 @@ TEST_P(StreamPackingRoundtrip, FullProtocolOverPackedStreamsDecryptsToGroundTrut
         EXPECT_EQ(eval_key_stream.size(),
                   expected_stream_bytes(seed_bytes,
                                         shape.automorphism_levels * shape.ksk_digits * shape.n +
-                                            2 * shape.prime_digits * shape.n,
+                                            shape.prime_digits * shape.n, // RLWE'(sk^2): d' polynomials
                                         shape.bits));
         EXPECT_EQ(eval_key_stream.size(), public_material_stream_bytes(params));
 
@@ -149,9 +149,7 @@ TEST_P(StreamPackingRoundtrip, FullProtocolOverPackedStreamsDecryptsToGroundTrut
             EXPECT_EQ(received_eval_wire.automorphism_b_values[lvl], canonical(eval_wire.automorphism_b_values[lvl], q))
                 << "automorphism level " << lvl;
         }
-        EXPECT_EQ(received_eval_wire.rgsw_message_row_b_values, canonical(eval_wire.rgsw_message_row_b_values, q));
-        EXPECT_EQ(received_eval_wire.rgsw_message_sk_row_b_values,
-                  canonical(eval_wire.rgsw_message_sk_row_b_values, q));
+        EXPECT_EQ(received_eval_wire.rgsw_sk_squared_b_values, canonical(eval_wire.rgsw_sk_squared_b_values, q));
 
         ClientPublicMaterial pub = reconstruct_public_material(ctx, params, received_eval_wire);
 

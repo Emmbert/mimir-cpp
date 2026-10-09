@@ -149,8 +149,7 @@ std::vector<uint8_t> serialize_seeded_public_material(const SeededClientPublicMa
     std::vector<uint8_t> buf;
     write_bytes(buf, material.eval_key_seed.data(), material.eval_key_seed.size());
     write_vec_vec_vec_i64(buf, material.automorphism_b_values);
-    write_vec_vec_i64(buf, material.rgsw_message_row_b_values);
-    write_vec_vec_i64(buf, material.rgsw_message_sk_row_b_values);
+    write_vec_vec_i64(buf, material.rgsw_sk_squared_b_values);
     return buf;
 }
 
@@ -159,8 +158,7 @@ SeededClientPublicMaterial deserialize_seeded_public_material(const std::vector<
     SeededClientPublicMaterial material;
     r.read_bytes(material.eval_key_seed.data(), material.eval_key_seed.size());
     material.automorphism_b_values = r.read_vec_vec_vec_i64();
-    material.rgsw_message_row_b_values = r.read_vec_vec_i64();
-    material.rgsw_message_sk_row_b_values = r.read_vec_vec_i64();
+    material.rgsw_sk_squared_b_values = r.read_vec_vec_i64();
     return material;
 }
 

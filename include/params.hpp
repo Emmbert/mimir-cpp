@@ -110,9 +110,9 @@ struct CryptoContext {
     // Two separate gadgets, deliberately NOT one shared object:
     //   gadget_ksk:  used only for LWEToRLWEKeySwitchKey's automorphism
     //                keys. Base = decomposition_base_ksk.
-    //   gadget_rgsw: used for the RGSW ciphertext's own internal structure
-    //                (message*sk row, and later decomposing incoming
-    //                ciphertexts in RLWEGadgetCT::mul). Base =
+    //   gadget_rgsw: used for the scheme switching key RLWE'(sk^2) (which
+    //                builds the RGSW message*sk row) and for decomposing
+    //                incoming ciphertexts in RLWEGadgetCT::mul. Base =
     //                decomposition_base_prime -- MUST match whatever base
     //                the client's LWEGadgetCT (LWE') was built with.
     // See LWEToRGSWKeySwitchKey's two-argument constructor for why these

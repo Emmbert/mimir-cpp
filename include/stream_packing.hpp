@@ -31,8 +31,7 @@ namespace psearch {
 //   Eval keys (one stream, one-time):
 //     [eval_key_seed: 16 B]
 //     [automorphism b's: log2(n) levels x d_ksk digits x n coefficients]
-//     [RGSW message-row b's:    d_prime digits x n coefficients]
-//     [RGSW message*sk-row b's: d_prime digits x n coefficients]
+//     [RLWE'(sk^2) b's:         d_prime digits x n coefficients]
 //
 //   Query (one stream PER COMPONENT RING k, per query):
 //     [seed_k: 16 B][l embedding b's of ring k]

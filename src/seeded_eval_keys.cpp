@@ -35,8 +35,8 @@ SeededClientPublicMaterial build_seeded_public_material(const CryptoContext& ctx
     auto eval_key_dist = std::make_shared<SeededUniformDistribution>(eval_key_seed, 0, ctx.rlwe_param->modulus());
     std::shared_ptr<Distribution> original_dist = secret.rlwe_sk->set_unif_dist(eval_key_dist);
 
-    // Builds lwe_to_rlwe_ksk (automorphism keys) THEN lwe_to_rgsw_ksk
-    // (message row, then message*sk row) -- exactly the order reconstruction
+    // Builds lwe_to_rlwe_ksk (automorphism keys) THEN lwe_to_rgsw_ksk's
+    // RLWE'(sk^2) (d' rows, digit order) -- exactly the order reconstruction
     // below has to replicate.
     ClientPublicMaterial pub = generate_client_public_material(ctx, secret);
 
@@ -53,9 +53,7 @@ SeededClientPublicMaterial build_seeded_public_material(const CryptoContext& ctx
         wire.automorphism_b_values.push_back(ext_ct.get_b_coefficients());
     }
 
-    const RLWEGadgetCT& ct_of_sk_dest = pub.lwe_to_rgsw_ksk->get_ct_of_sk_dest();
-    wire.rgsw_message_row_b_values = ct_of_sk_dest.get_b_coefficients();
-    wire.rgsw_message_sk_row_b_values = ct_of_sk_dest.get_b_sk_coefficients();
+    wire.rgsw_sk_squared_b_values = pub.lwe_to_rgsw_ksk->get_ct_of_sk_squared().get_b_coefficients();
 
     return wire;
 }
@@ -79,27 +77,18 @@ ClientPublicMaterial reconstruct_public_material(const CryptoContext& ctx, const
     }
     auto lwe_to_rlwe_ksk = std::make_shared<LWEToRLWEKeySwitchKey>(ctx.rlwe_param, std::move(ext_key_content));
 
-    // --- RGSW switch key's ct_of_sk_dest: message row, then message*sk row. -
-    std::vector<RLWECT> message_row;
-    message_row.reserve(wire.rgsw_message_row_b_values.size());
-    for (const auto& digit_b : wire.rgsw_message_row_b_values) {
+    // --- Scheme switching key RLWE'(sk^2): d' rows, continuing the stream. -
+    std::vector<RLWECT> sk_squared_rows;
+    sk_squared_rows.reserve(wire.rgsw_sk_squared_b_values.size());
+    for (const auto& digit_b : wire.rgsw_sk_squared_b_values) {
         Polynomial a = reconstruct_a_polynomial(a_stream, params.n, params.q);
         Polynomial b = polynomial_from_coefficients(digit_b, params.n, params.q);
-        message_row.emplace_back(ctx.rlwe_param, a, b);
+        sk_squared_rows.emplace_back(ctx.rlwe_param, a, b);
     }
-
-    std::vector<RLWECT> message_sk_row;
-    message_sk_row.reserve(wire.rgsw_message_sk_row_b_values.size());
-    for (const auto& digit_b : wire.rgsw_message_sk_row_b_values) {
-        Polynomial a = reconstruct_a_polynomial(a_stream, params.n, params.q);
-        Polynomial b = polynomial_from_coefficients(digit_b, params.n, params.q);
-        message_sk_row.emplace_back(ctx.rlwe_param, a, b);
-    }
-
-    RLWEGadgetCT ct_of_sk_dest(ctx.rlwe_param, ctx.gadget_rgsw, message_row, message_sk_row);
+    ExtendedRLWECT ct_of_sk_squared(ctx.rlwe_param, ctx.gadget_rgsw, sk_squared_rows);
 
     auto lwe_to_rgsw_ksk = std::make_shared<LWEToRGSWKeySwitchKey>(
-        lwe_to_rlwe_ksk, std::move(ct_of_sk_dest), ctx.rlwe_param, ctx.gadget_rgsw);
+        lwe_to_rlwe_ksk, std::move(ct_of_sk_squared), ctx.rlwe_param, ctx.gadget_rgsw);
 
     return ClientPublicMaterial{lwe_to_rlwe_ksk, lwe_to_rgsw_ksk};
 }

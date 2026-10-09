@@ -67,16 +67,14 @@ TEST(WireProtocolRoundtrip, SeededClientPublicMaterial) {
         {{1, 2}, {3, 4}, {5, 6}},  // level 0: 3 digits, 2 coefficients each
         {{7, 8, 9}, {10, 11, 12}}, // level 1: 2 digits, 3 coefficients each
     };
-    material.rgsw_message_row_b_values = {{-1, -2}, {-3, -4}, {-5, -6}};
-    material.rgsw_message_sk_row_b_values = {{100, 200}, {300, 400}};
+    material.rgsw_sk_squared_b_values = {{-1, -2}, {-3, -4}, {-5, -6}};
 
     auto bytes = serialize_seeded_public_material(material);
     SeededClientPublicMaterial decoded = deserialize_seeded_public_material(bytes);
 
     EXPECT_EQ(decoded.eval_key_seed, material.eval_key_seed);
     EXPECT_EQ(decoded.automorphism_b_values, material.automorphism_b_values);
-    EXPECT_EQ(decoded.rgsw_message_row_b_values, material.rgsw_message_row_b_values);
-    EXPECT_EQ(decoded.rgsw_message_sk_row_b_values, material.rgsw_message_sk_row_b_values);
+    EXPECT_EQ(decoded.rgsw_sk_squared_b_values, material.rgsw_sk_squared_b_values);
 }
 
 TEST(WireProtocolRoundtrip, QueryResponse) {
@@ -115,8 +113,7 @@ TEST(WireProtocolRoundtrip, RegistrationMessageEnvelope) {
     msg.session_id = make_session_id(7);
     msg.material.eval_key_seed = make_session_id(90);
     msg.material.automorphism_b_values = {{{1, 2}, {3, 4}}};
-    msg.material.rgsw_message_row_b_values = {{5, 6}};
-    msg.material.rgsw_message_sk_row_b_values = {{7, 8}};
+    msg.material.rgsw_sk_squared_b_values = {{5, 6}};
 
     auto bytes = serialize_registration_message(msg);
     RegistrationMessage decoded = deserialize_registration_message(bytes);
@@ -124,8 +121,7 @@ TEST(WireProtocolRoundtrip, RegistrationMessageEnvelope) {
     EXPECT_EQ(decoded.session_id, msg.session_id);
     EXPECT_EQ(decoded.material.eval_key_seed, msg.material.eval_key_seed);
     EXPECT_EQ(decoded.material.automorphism_b_values, msg.material.automorphism_b_values);
-    EXPECT_EQ(decoded.material.rgsw_message_row_b_values, msg.material.rgsw_message_row_b_values);
-    EXPECT_EQ(decoded.material.rgsw_message_sk_row_b_values, msg.material.rgsw_message_sk_row_b_values);
+    EXPECT_EQ(decoded.material.rgsw_sk_squared_b_values, msg.material.rgsw_sk_squared_b_values);
 }
 
 TEST(WireProtocolRoundtrip, QueryMessageEnvelope) {
